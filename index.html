@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no"/>
+<title>Brew & Bloom — Digital Menu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Jost:wght@300;400;500&family=Cormorant+Infant:ital,wght@0,300;1,300;1,400&display=swap" rel="stylesheet"/>
+<style>
+/* ═══════════════════════════════════════════
+   TOKENS & RESET
+═══════════════════════════════════════════ */
+:root {
+  --cream:    #F7F0E6;
+  --cream2:   #EDE3D4;
+  --parchment:#D9CAAF;
+  --espresso: #2C1810;
+  --mocha:    #5C3D2E;
+  --caramel:  #C08B52;
+  --gold:     #B8860B;
+  --sage:     #7A8C6E;
+  --blush:    #E8C5A0;
+  --white:    #FEFCF8;
+  --ink:      #1A0F08;
+  --shadow:   rgba(44,24,16,0.12);
+  --r:        16px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  height: 100%;
+  background: var(--espresso);
+  overflow: hidden;
+}
+
+body {
+  font-family: 'Jost', sans-serif;
+  background: var(--cream);
+  color: var(--espresso);
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ═══════════════════════════════════════════
+   BACKGROUND TEXTURE
+═══════════════════════════════════════════ */
+body::before {
+  content:'';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 10%, rgba(192,139,82,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 90%, rgba(122,140,110,0.07) 0%, transparent 50%),
+    url("data:image/svg+xml,%3Csvg width='200' height='200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ═══════════════════════════════════════════
+   SPLASH SCREEN
+═══════════════════════════════════════════ */
+#splash {
+  position: fixed;
+  inset: 0;
+  background: var(--espresso);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  transition: opacity 0.8s ease, transform 0.8s ease;
+  gap: 20px;
+}
+
+#splash.hide {
+  opacity: 0;
+  transform: scale(1.04);
+  pointer-events: none;
+}
+
+.splash-logo {
+  font-family: 'Playfair Display', serif;
+  font-style: italic;
+  font-size: clamp(42px, 8vw, 72px);
+  color: var(--cream);
+  letter-spacing: -1px;
+  line-height: 1;
+  text-align: center;
+  animation: fadeUp 1s ease 0.3s both;
+}
+
+.splash-tagline {
+  font-family: 'Jost', sans-serif;
+  font-weight: 300;
+  font-size: 13px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--caramel);
+  animation: fadeUp 1s ease 0.6s both;
+}
+
+.splash-divider {
+  width: 60px;
+  height: 1px;
+  background: var(--caramel);
+  animation: fadeUp 1s ease 0.5s both;
+}
+
+.splash-beans {
+  font-size: 36px;
+  animation: fadeUp 1s ease 0.2s both, spin 8s linear infinite;
+}
+
+.tap-hint {
+  margin-top: 40px;
+  font-size: 12px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--parchment);
+  opacity: 0.6;
+  animation: pulse 2s ease infinite 1.5s, fadeUp 1s ease 1.2s both;
+}
+
+/* ═══════════════════════════════════════════
+   HEADER
+═══════════════════════════════════════════ */
+header {
+  position: relative;
+  z-index: 10;
+  background: var(--espresso);
+  padding: 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 70px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 24px rgba(44,24,16,0.25);
+}
+
+.logo {
+  font-family: 'Playfair Display', serif;
+  font-style: italic;
+  font-size: 26px;
+  color: var(--cream);
+  letter-spacing: -0.5px;
+}
+
+.logo span {
+  color: var(--caramel);
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.badge-open {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--cream);
+  opacity: 0.7;
+}
+
+.dot-green {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #7CB87C;
+  animation: pulse 2s infinite;
+}
+
+.wifi-badge {
+  font-size: 11px;
+  letter-spacing: 1.5px;
+  color: var(--caramel);
+  text-transform: uppercase;
+}
+
+/* ═══════════════════════════════════════════
+   CATEGORY NAV
+═══════════════════════════════════════════ */
+.cat-nav {
+  position: relative;
+  z-index: 10;
+  background: var(--espresso);
+  border-bottom: 1px solid rgba(192,139,82,0.2);
+  padding: 0 20px;
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.cat-nav::-webkit-scrollbar { display: none; }
+
+.cat-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 18px;
+  border: none;
+  background: transparent;
+  color: rgba(247,240,230,0.45);
+  font-family: 'Jost', sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.cat-btn .cat-icon { font-size: 18px; line-height: 1; }
+
+.cat-btn:hover { color: var(--cream); }
+
+.cat-btn.active {
+  color: var(--caramel);
+  border-bottom-color: var(--caramel);
+}
+
+/* ═══════════════════════════════════════════
+   CONTENT AREA
+═══════════════════════════════════════════ */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
+  z-index: 1;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--parchment) transparent;
+}
+
+.content::-webkit-scrollbar { width: 4px; }
+.content::-webkit-scrollbar-thumb { background: var(--parchment); border-radius: 2px; }
+
+/* ═══════════════════════════════════════════
+   CATEGORY SECTION
+═══════════════════════════════════════════ */
+.cat-section {
+  display: none;
+  padding: 28px 24px 40px;
+  animation: fadeUp 0.35s ease both;
+}
+
+.cat-section.active { display: block; }
+
+.section-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 28px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--parchment);
+}
+
+.section-title {
+  font-family: 'Playfair Display', serif;
+  font-size: clamp(28px, 5vw, 40px);
+  font-style: italic;
+  color: var(--espresso);
+  line-height: 1;
+}
+
+.section-subtitle {
+  font-size: 11px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--caramel);
+  padding-bottom: 4px;
+}
+
+.section-icon {
+  font-size: 32px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+/* ═══════════════════════════════════════════
+   MENU GRID
+═══════════════════════════════════════════ */
+.menu-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.menu-grid.list {
+  grid-template-columns: 1fr;
+}
+
+/* ═══════════════════════════════════════════
+   MENU CARD
+═══════════════════════════════════════════ */
+.menu-card {
+  background: var(--white);
+  border-radius: var(--r);
+  padding: 20px 22px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  box-shadow: 0 2px 12px var(--shadow);
+  border: 1px solid rgba(192,139,82,0.1);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.menu-card::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: var(--caramel);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.menu-card:active { transform: scale(0.98); }
+.menu-card:hover { box-shadow: 0 6px 24px var(--shadow); transform: translateY(-1px); }
+.menu-card:hover::before { opacity: 1; }
+
+.card-body { flex: 1; }
+
+.item-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--espresso);
+  line-height: 1.2;
+  margin-bottom: 5px;
+}
+
+.item-desc {
+  font-size: 12px;
+  font-weight: 300;
+  color: var(--mocha);
+  line-height: 1.5;
+  opacity: 0.8;
+  margin-bottom: 8px;
+}
+
+.item-tags {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 9px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 20px;
+  font-weight: 500;
+}
+
+.tag-popular { background: rgba(192,139,82,0.15); color: var(--gold); }
+.tag-new     { background: rgba(122,140,110,0.15); color: var(--sage); }
+.tag-hot     { background: rgba(180,60,40,0.1);   color: #A03020; }
+.tag-cold    { background: rgba(60,100,180,0.1);   color: #3060A0; }
+.tag-vegan   { background: rgba(100,160,100,0.12); color: #4A7A4A; }
+.tag-seasonal{ background: rgba(180,140,60,0.15);  color: #8A6010; }
+
+.card-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.price {
+  font-family: 'Playfair Display', serif;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--espresso);
+  line-height: 1;
+}
+
+.price-note {
+  font-size: 9px;
+  color: var(--caramel);
+  letter-spacing: 0.5px;
+  text-align: right;
+}
+
+.item-emoji {
+  font-size: 28px;
+  line-height: 1;
+}
+
+/* Size variants */
+.size-prices {
+  margin-top: 8px;
+  display: flex;
+  gap: 10px;
+}
+
+.size-opt {
+  text-align: center;
+}
+
+.size-label {
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--caramel);
+  display: block;
+}
+
+.size-price {
+  font-family: 'Playfair Display', serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--espresso);
+}
+
+/* ═══════════════════════════════════════════
+   DIVIDER WITHIN SECTION
+═══════════════════════════════════════════ */
+.sub-heading {
+  font-size: 10px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--caramel);
+  margin: 28px 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sub-heading::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--parchment);
+}
+
+/* ═══════════════════════════════════════════
+   FEATURED BANNER
+═══════════════════════════════════════════ */
+.featured-banner {
+  background: linear-gradient(135deg, var(--espresso) 0%, var(--mocha) 100%);
+  border-radius: var(--r);
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.featured-banner::before {
+  content: '☕';
+  position: absolute;
+  right: -10px;
+  bottom: -20px;
+  font-size: 100px;
+  opacity: 0.06;
+}
+
+.featured-banner::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--caramel), transparent);
+}
+
+.featured-label {
+  font-size: 9px;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--caramel);
+  margin-bottom: 6px;
+}
+
+.featured-name {
+  font-family: 'Playfair Display', serif;
+  font-size: 24px;
+  font-style: italic;
+  color: var(--cream);
+  line-height: 1.1;
+  margin-bottom: 6px;
+}
+
+.featured-desc {
+  font-size: 12px;
+  font-weight: 300;
+  color: var(--blush);
+  line-height: 1.5;
+  opacity: 0.8;
+  max-width: 280px;
+}
+
+.featured-price {
+  font-family: 'Playfair Display', serif;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--caramel);
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════
+   FOOTER
+═══════════════════════════════════════════ */
+footer {
+  position: relative;
+  z-index: 10;
+  background: var(--espresso);
+  padding: 10px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(192,139,82,0.15);
+}
+
+.footer-note {
+  font-size: 10px;
+  color: rgba(247,240,230,0.35);
+  letter-spacing: 1px;
+}
+
+.footer-wifi {
+  font-size: 10px;
+  color: var(--caramel);
+  letter-spacing: 1px;
+}
+
+/* ═══════════════════════════════════════════
+   ANIMATIONS
+═══════════════════════════════════════════ */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+/* ═══════════════════════════════════════════
+   RESPONSIVE TWEAKS
+═══════════════════════════════════════════ */
+@media (max-width: 600px) {
+  .menu-grid { grid-template-columns: 1fr; }
+  .featured-banner { flex-direction: column; align-items: flex-start; }
+  .featured-price { font-size: 24px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── SPLASH ─────────────────────────────── -->
+<div id="splash" onclick="hideSplash()">
+  <div class="splash-beans">☕</div>
+  <div class="splash-divider"></div>
+  <div class="splash-logo">Brew <span style="color:var(--caramel)">&</span> Bloom</div>
+  <div class="splash-tagline">Artisan Coffee · Specialty Drinks · Fresh Bakes</div>
+  <div class="tap-hint">Tap anywhere to explore our menu</div>
+</div>
+
+<!-- ── HEADER ─────────────────────────────── -->
+<header>
+  <div class="logo">Brew <span>&</span> Bloom</div>
+  <div class="header-info">
+    <div class="badge-open">
+      <div class="dot-green"></div>
+      Now Open
+    </div>
+    <div class="wifi-badge">☁ Free WiFi: BrewBloom_Guest</div>
+  </div>
+</header>
+
+<!-- ── CATEGORY NAV ───────────────────────── -->
+<nav class="cat-nav" id="catNav">
+  <button class="cat-btn active" onclick="showCat('espresso')" data-cat="espresso">
+    <span class="cat-icon">☕</span>Espresso
+  </button>
+  <button class="cat-btn" onclick="showCat('filter')" data-cat="filter">
+    <span class="cat-icon">☕</span>Filter Coffee
+  </button>
+  <button class="cat-btn" onclick="showCat('cold')" data-cat="cold">
+    <span class="cat-icon">🧊</span>Cold Drinks
+  </button>
+  <button class="cat-btn" onclick="showCat('tea')" data-cat="tea">
+    <span class="cat-icon">🍵</span>Tea & Botanicals
+  </button>
+  <button class="cat-btn" onclick="showCat('signature')" data-cat="signature">
+    <span class="cat-icon">✨</span>Signatures
+  </button>
+  <button class="cat-btn" onclick="showCat('food')" data-cat="food">
+    <span class="cat-icon">🥐</span>Food & Bakes
+  </button>
+  <button class="cat-btn" onclick="showCat('extras')" data-cat="extras">
+    <span class="cat-icon">➕</span>Add-ons
+  </button>
+</nav>
+
+<!-- ── CONTENT ────────────────────────────── -->
+<div class="content">
+
+  <!-- ESPRESSO DRINKS -->
+  <section class="cat-section active" id="cat-espresso">
+    <div class="section-header">
+      <div class="section-icon">☕</div>
+      <div>
+        <div class="section-subtitle">Hot · Crafted to Order</div>
+        <div class="section-title">Espresso Drinks</div>
+      </div>
+    </div>
+
+    <div class="featured-banner">
+      <div>
+        <div class="featured-label">⭐ Chef's Recommendation</div>
+        <div class="featured-name">Honey Oat Latte</div>
+        <div class="featured-desc">Double espresso, steamed oat milk, wildflower honey, a dusting of cinnamon. Our most-loved cup.</div>
+      </div>
+      <div class="featured-price">SAR 22</div>
+    </div>
+
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Espresso</div>
+          <div class="item-desc">Pure, concentrated shot of our house blend. Smooth with a hazelnut finish.</div>
+          <div class="item-tags"><span class="tag tag-hot">Hot</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Single</span><span class="size-price">SAR 12</span></div>
+            <div class="size-opt"><span class="size-label">Double</span><span class="size-price">SAR 15</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">☕</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cappuccino</div>
+          <div class="item-desc">Espresso, steamed milk, velvety microfoam. Classic Italian balance.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span><span class="tag tag-hot">Hot</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Small</span><span class="size-price">SAR 18</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 22</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">☕</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Flat White</div>
+          <div class="item-desc">Ristretto shots with silky micro-steamed whole milk. Stronger, richer.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Regular</span><span class="size-price">SAR 20</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">☕</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Café Latte</div>
+          <div class="item-desc">Espresso with generous steamed milk and light foam. Gentle and creamy.</div>
+          <div class="item-tags"><span class="tag tag-hot">Hot</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Small</span><span class="size-price">SAR 18</span></div>
+            <div class="size-opt"><span class="size-label">Medium</span><span class="size-price">SAR 21</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 24</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🥛</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cortado</div>
+          <div class="item-desc">Equal parts espresso and warm milk. Cuts the acidity beautifully.</div>
+          <div class="item-tags"></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Regular</span><span class="size-price">SAR 16</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">☕</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Macchiato</div>
+          <div class="item-desc">Espresso stained with a touch of creamy foam. Bold and expressive.</div>
+          <div class="item-tags"><span class="tag tag-hot">Hot</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Single</span><span class="size-price">SAR 14</span></div>
+            <div class="size-opt"><span class="size-label">Double</span><span class="size-price">SAR 17</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">☕</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Americano</div>
+          <div class="item-desc">Espresso diluted with hot water. Clean, smooth, long. Never bitter.</div>
+          <div class="item-tags"><span class="tag tag-hot">Hot</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Small</span><span class="size-price">SAR 15</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 18</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">☕</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Mocha</div>
+          <div class="item-desc">Espresso, chocolate sauce, steamed milk, topped with whipped cream.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Medium</span><span class="size-price">SAR 23</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 26</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🍫</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- FILTER COFFEE -->
+  <section class="cat-section" id="cat-filter">
+    <div class="section-header">
+      <div class="section-icon">☕</div>
+      <div>
+        <div class="section-subtitle">Single Origin · Slow Brewed</div>
+        <div class="section-title">Filter Coffee</div>
+      </div>
+    </div>
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Pour Over</div>
+          <div class="item-desc">Hand-poured single origin. Ask our barista for today's origin and tasting notes.</div>
+          <div class="item-tags"><span class="tag tag-new">Origin Varies</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 22</div>
+          <div class="item-emoji">☕</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">French Press</div>
+          <div class="item-desc">Full-bodied, immersive brew. 4-minute steep, pressed to perfection. Serves two.</div>
+          <div class="item-tags"><span class="tag tag-popular">For Two</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 35</div>
+          <div class="item-emoji">☕</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">AeroPress</div>
+          <div class="item-desc">Pressure-brewed for clean, concentrated flavor. Versatile and vibrant.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 20</div>
+          <div class="item-emoji">☕</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Chemex</div>
+          <div class="item-desc">Crystal-clear, elegant brew with bright clarity and floral notes. Serves two.</div>
+          <div class="item-tags"><span class="tag tag-seasonal">Seasonal Origin</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 38</div>
+          <div class="item-emoji">☕</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cold Brew (Hot)</div>
+          <div class="item-desc">Our 18-hour cold brew, gently warmed. Surprisingly smooth and low-acid.</div>
+          <div class="item-tags"><span class="tag tag-new">New</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 24</div>
+          <div class="item-emoji">☕</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- COLD DRINKS -->
+  <section class="cat-section" id="cat-cold">
+    <div class="section-header">
+      <div class="section-icon">🧊</div>
+      <div>
+        <div class="section-subtitle">Chilled · Refreshing</div>
+        <div class="section-title">Cold Drinks</div>
+      </div>
+    </div>
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Iced Latte</div>
+          <div class="item-desc">Espresso over ice with chilled milk. Clean and crisp.</div>
+          <div class="item-tags"><span class="tag tag-cold">Cold</span><span class="tag tag-popular">Popular</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Medium</span><span class="size-price">SAR 20</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 23</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🥤</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cold Brew</div>
+          <div class="item-desc">18-hour steep, served over ice. Smooth, bold, never bitter.</div>
+          <div class="item-tags"><span class="tag tag-cold">Cold</span><span class="tag tag-popular">Popular</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Regular</span><span class="size-price">SAR 22</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 26</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🥤</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cold Brew Tonic</div>
+          <div class="item-desc">Cold brew floated over sparkling tonic water. Bright, effervescent, unexpected.</div>
+          <div class="item-tags"><span class="tag tag-new">New</span><span class="tag tag-cold">Cold</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 26</div>
+          <div class="item-emoji">🍶</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Iced Americano</div>
+          <div class="item-desc">Espresso shots poured over a glass of ice. Refreshingly strong.</div>
+          <div class="item-tags"><span class="tag tag-cold">Cold</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Regular</span><span class="size-price">SAR 17</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 20</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🥤</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Iced Matcha Latte</div>
+          <div class="item-desc">Ceremonial grade matcha shaken with oat milk and light honey over ice.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Vegan</span><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 24</div>
+          <div class="item-emoji">🍵</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Frappé</div>
+          <div class="item-desc">Blended espresso, milk and ice. Choose: Classic, Mocha, Caramel, or Vanilla.</div>
+          <div class="item-tags"><span class="tag tag-cold">Blended</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Medium</span><span class="size-price">SAR 25</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 28</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🥤</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Fresh Lemonade</div>
+          <div class="item-desc">Squeezed daily. Still or sparkling. Add mint for SAR 2.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Vegan</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 18</div>
+          <div class="item-emoji">🍋</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- TEA & BOTANICALS -->
+  <section class="cat-section" id="cat-tea">
+    <div class="section-header">
+      <div class="section-icon">🍵</div>
+      <div>
+        <div class="section-subtitle">Loose Leaf · Herbal · Wellness</div>
+        <div class="section-title">Tea & Botanicals</div>
+      </div>
+    </div>
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Matcha Latte</div>
+          <div class="item-desc">Ceremonial grade Japanese matcha, whisked with steamed oat milk and a touch of honey.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Vegan</span><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 23</div>
+          <div class="item-emoji">🍵</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Masala Chai</div>
+          <div class="item-desc">Assam tea, ginger, cardamom, clove, black pepper, steamed milk. Warming spice blend.</div>
+          <div class="item-tags"><span class="tag tag-hot">Hot</span><span class="tag tag-popular">Popular</span></div>
+          <div class="size-prices">
+            <div class="size-opt"><span class="size-label">Regular</span><span class="size-price">SAR 19</span></div>
+            <div class="size-opt"><span class="size-label">Large</span><span class="size-price">SAR 22</span></div>
+          </div>
+        </div>
+        <div class="item-emoji">🍵</div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Chamomile & Honey</div>
+          <div class="item-desc">Dried chamomile blossoms, raw honey, lemon zest. Calm in a cup.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Vegan</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 16</div>
+          <div class="item-emoji">🌼</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Earl Grey Latte</div>
+          <div class="item-desc">Bergamot-scented black tea with steamed milk. Fragrant and comforting.</div>
+          <div class="item-tags"><span class="tag tag-hot">Hot</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 20</div>
+          <div class="item-emoji">🍵</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Rose & Hibiscus Bloom</div>
+          <div class="item-desc">Hibiscus petals, rose water, dried berries. Served hot or iced. Vibrant ruby color.</div>
+          <div class="item-tags"><span class="tag tag-seasonal">Seasonal</span><span class="tag tag-vegan">Vegan</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 18</div>
+          <div class="item-emoji">🌹</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Fresh Mint Tea</div>
+          <div class="item-desc">Garden-fresh mint leaves, steeped in hot water. Pure, clean, refreshing.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Vegan</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 14</div>
+          <div class="item-emoji">🌿</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- SIGNATURE DRINKS -->
+  <section class="cat-section" id="cat-signature">
+    <div class="section-header">
+      <div class="section-icon">✨</div>
+      <div>
+        <div class="section-subtitle">Exclusive · Crafted In-House</div>
+        <div class="section-title">Signature Creations</div>
+      </div>
+    </div>
+
+    <div class="featured-banner">
+      <div>
+        <div class="featured-label">🏆 Bestseller of the Season</div>
+        <div class="featured-name">The Bloom Latte</div>
+        <div class="featured-desc">Butterfly pea flower espresso, lavender syrup, oat milk. Pours purple, turns violet with lemon.</div>
+      </div>
+      <div class="featured-price">SAR 29</div>
+    </div>
+
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Dalgona Cloud</div>
+          <div class="item-desc">Whipped espresso cream floating on chilled milk. Silky, dramatic, unforgettable.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span><span class="tag tag-cold">Cold</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 27</div>
+          <div class="item-emoji">☁️</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Salted Caramel Cortado</div>
+          <div class="item-desc">Ristretto, house salted caramel, equal parts warm milk. Perfect sweet-savory balance.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 25</div>
+          <div class="item-emoji">🍯</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Pistachio Rose Latte</div>
+          <div class="item-desc">Pistachio paste, rose water, steamed milk, espresso. A Middle Eastern love letter.</div>
+          <div class="item-tags"><span class="tag tag-new">New</span><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 28</div>
+          <div class="item-emoji">🌹</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cardamom Arabic Coffee</div>
+          <div class="item-desc">Light roast qahwa with green cardamom and saffron. Served with dates.</div>
+          <div class="item-tags"><span class="tag tag-seasonal">Traditional</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 20</div>
+          <div class="item-emoji">🫖</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Espresso Tonic Citrus</div>
+          <div class="item-desc">Double espresso over Fever-Tree tonic, orange peel, ice. Sparkling and bold.</div>
+          <div class="item-tags"><span class="tag tag-cold">Cold</span><span class="tag tag-new">New</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 26</div>
+          <div class="item-emoji">🍊</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Brown Sugar Oat Shaker</div>
+          <div class="item-desc">Espresso shaken with ice, brown sugar syrup, topped with oat milk foam.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Vegan</span><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 26</div>
+          <div class="item-emoji">🤎</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- FOOD & BAKES -->
+  <section class="cat-section" id="cat-food">
+    <div class="section-header">
+      <div class="section-icon">🥐</div>
+      <div>
+        <div class="section-subtitle">Baked Fresh Daily</div>
+        <div class="section-title">Food & Bakes</div>
+      </div>
+    </div>
+
+    <div class="sub-heading">Pastries & Baked Goods</div>
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Butter Croissant</div>
+          <div class="item-desc">72-hour laminated dough, French butter, baked golden every morning.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 16</div>
+          <div class="item-emoji">🥐</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Almond Croissant</div>
+          <div class="item-desc">Yesterday's croissant, soaked in almond syrup, filled with frangipane, baked again.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 20</div>
+          <div class="item-emoji">🥐</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Banana Walnut Loaf</div>
+          <div class="item-desc">Moist, spiced banana bread with toasted walnuts and brown butter glaze.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Can be Vegan</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 18</div>
+          <div class="item-emoji">🍌</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Pistachio Knot</div>
+          <div class="item-desc">Laminated pastry knot filled with pistachio cream and cardamom sugar.</div>
+          <div class="item-tags"><span class="tag tag-new">New</span><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 22</div>
+          <div class="item-emoji">💚</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="sub-heading">Light Bites</div>
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Avocado Toast</div>
+          <div class="item-desc">Sourdough, smashed avocado, poached egg, dukkah, chilli flakes.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 34</div>
+          <div class="item-emoji">🥑</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Cheese & Za'atar Croissant</div>
+          <div class="item-desc">Warm croissant filled with akkawi cheese and Palestinian za'atar blend.</div>
+          <div class="item-tags"><span class="tag tag-hot">Warm</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 24</div>
+          <div class="item-emoji">🧀</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Granola Bowl</div>
+          <div class="item-desc">House granola, Greek yoghurt, seasonal fruits, honey drizzle.</div>
+          <div class="item-tags"><span class="tag tag-vegan">Healthy</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 30</div>
+          <div class="item-emoji">🍓</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="sub-heading">Sweet Treats</div>
+    <div class="menu-grid">
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Chocolate Fudge Brownie</div>
+          <div class="item-desc">Dense, fudgy, crackly-topped. Warm with a scoop of vanilla on request (+SAR 8).</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 20</div>
+          <div class="item-emoji">🍫</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Affogato</div>
+          <div class="item-desc">A shot of hot espresso poured over a scoop of vanilla gelato. Simple perfection.</div>
+          <div class="item-tags"><span class="tag tag-popular">Popular</span></div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 25</div>
+          <div class="item-emoji">🍨</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ADD-ONS -->
+  <section class="cat-section" id="cat-extras">
+    <div class="section-header">
+      <div class="section-icon">➕</div>
+      <div>
+        <div class="section-subtitle">Customize Your Drink</div>
+        <div class="section-title">Add-ons & Extras</div>
+      </div>
+    </div>
+
+    <div class="sub-heading">Milk Alternatives</div>
+    <div class="menu-grid list">
+      {[
+        ["Oat Milk", "Creamy, barista-grade. Our most popular alternative.", "SAR 5"],
+        ["Almond Milk", "Slightly nutty, light. Great in lattes.", "SAR 5"],
+        ["Soy Milk", "Smooth and neutral. Froths beautifully.", "SAR 5"],
+        ["Coconut Milk", "Tropical hint, naturally sweet.", "SAR 5"],
+        ["Full Cream Milk", "Standard house milk, no charge.", "Free"],
+      ].map(([n,d,p]) => `
+        <div class="menu-card">
+          <div class="card-body">
+            <div class="item-name">${n}</div>
+            <div class="item-desc">${d}</div>
+          </div>
+          <div class="card-right">
+            <div class="price" style="color:${p === 'Free' ? 'var(--sage)' : 'var(--espresso)'}">${p}</div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="sub-heading">Syrups & Flavours</div>
+    <div class="menu-grid">
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Flavoured Syrups</div>
+          <div class="item-desc">Vanilla · Caramel · Hazelnut · Brown Sugar · Lavender · Rose · Cinnamon · Cardamom</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 4</div>
+          <div class="price-note">each</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Extra Espresso Shot</div>
+          <div class="item-desc">Add a single or double shot to any drink.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 5</div>
+          <div class="price-note">per shot</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Whipped Cream</div>
+          <div class="item-desc">House-made fresh whipped cream topping.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 4</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Honey Drizzle</div>
+          <div class="item-desc">Raw wildflower honey, locally sourced.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 3</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sub-heading">Temperature & Size Upgrades</div>
+    <div class="menu-grid">
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Size Upgrade</div>
+          <div class="item-desc">Upsize any drink to the next size.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 5</div>
+        </div>
+      </div>
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Decaf Espresso</div>
+          <div class="item-desc">Swiss Water Process decaf. Same quality, no caffeine.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 3</div>
+          <div class="price-note">surcharge</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:var(--espresso); border-radius:var(--r); padding:20px 24px; margin-top:28px; text-align:center;">
+      <div style="font-family:'Playfair Display',serif; font-style:italic; font-size:18px; color:var(--cream); margin-bottom:6px;">All prices include VAT</div>
+      <div style="font-size:12px; color:var(--blush); opacity:0.7; letter-spacing:1px;">Please inform our team of any allergies or dietary requirements.</div>
+    </div>
+  </section>
+
+</div><!-- end content -->
+
+<!-- ── FOOTER ─────────────────────────────── -->
+<footer>
+  <div class="footer-note">All prices in SAR · Inclusive of 15% VAT</div>
+  <div class="footer-wifi">☁ WiFi: BrewBloom_Guest · Pass: coffee2024</div>
+</footer>
+
+<script>
+// ── SPLASH ─────────────────────────────────
+function hideSplash() {
+  document.getElementById('splash').classList.add('hide');
+  setTimeout(() => {
+    document.getElementById('splash').style.display = 'none';
+  }, 900);
+}
+setTimeout(hideSplash, 3500);
+
+// ── CATEGORY SWITCHING ──────────────────────
+function showCat(id) {
+  // Deactivate all
+  document.querySelectorAll('.cat-section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+
+  // Activate target
+  document.getElementById('cat-' + id).classList.add('active');
+  document.querySelector(`[data-cat="${id}"]`).classList.add('active');
+
+  // Scroll content to top
+  document.querySelector('.content').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── STAGGER CARD ANIMATIONS ─────────────────
+function staggerCards() {
+  const cards = document.querySelectorAll('.cat-section.active .menu-card');
+  cards.forEach((card, i) => {
+    card.style.animationDelay = `${i * 0.05}s`;
+    card.style.animation = 'none';
+    card.offsetHeight; // reflow
+    card.style.animation = `fadeUp 0.4s ease ${i * 0.05}s both`;
+  });
+}
+
+// Observe section changes
+const observer = new MutationObserver(() => staggerCards());
+document.querySelectorAll('.cat-section').forEach(s => {
+  observer.observe(s, { attributes: true, attributeFilter: ['class'] });
+});
+staggerCards();
+
+// ── PREVENT ZOOM ON DOUBLE TAP ──────────────
+let lastTap = 0;
+document.addEventListener('touchend', e => {
+  const now = Date.now();
+  if (now - lastTap < 300) e.preventDefault();
+  lastTap = now;
+}, { passive: false });
+</script>
+</body>
+</html>
