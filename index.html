@@ -1263,23 +1263,55 @@ footer {
 
     <div class="sub-heading">Milk Alternatives</div>
     <div class="menu-grid list">
-      {[
-        ["Oat Milk", "Creamy, barista-grade. Our most popular alternative.", "SAR 5"],
-        ["Almond Milk", "Slightly nutty, light. Great in lattes.", "SAR 5"],
-        ["Soy Milk", "Smooth and neutral. Froths beautifully.", "SAR 5"],
-        ["Coconut Milk", "Tropical hint, naturally sweet.", "SAR 5"],
-        ["Full Cream Milk", "Standard house milk, no charge.", "Free"],
-      ].map(([n,d,p]) => `
-        <div class="menu-card">
-          <div class="card-body">
-            <div class="item-name">${n}</div>
-            <div class="item-desc">${d}</div>
-          </div>
-          <div class="card-right">
-            <div class="price" style="color:${p === 'Free' ? 'var(--sage)' : 'var(--espresso)'}">${p}</div>
-          </div>
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Oat Milk</div>
+          <div class="item-desc">Creamy, barista-grade. Our most popular alternative.</div>
         </div>
-      `).join('')}
+        <div class="card-right">
+          <div class="price">SAR 5</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Almond Milk</div>
+          <div class="item-desc">Slightly nutty, light. Great in lattes.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 5</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Soy Milk</div>
+          <div class="item-desc">Smooth and neutral. Froths beautifully.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 5</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Coconut Milk</div>
+          <div class="item-desc">Tropical hint, naturally sweet.</div>
+        </div>
+        <div class="card-right">
+          <div class="price">SAR 5</div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <div class="card-body">
+          <div class="item-name">Full Cream Milk</div>
+          <div class="item-desc">Standard house milk, no charge.</div>
+        </div>
+        <div class="card-right">
+          <div class="price" style="color:var(--sage)">Free</div>
+        </div>
+      </div>
     </div>
 
     <div class="sub-heading">Syrups & Flavours</div>
