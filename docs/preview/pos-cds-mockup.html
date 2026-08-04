@@ -1,0 +1,430 @@
+<title>POS Customer Display — Design Mockup</title>
+<style>
+  :root {
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --r:14px; --r-sm:10px;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+      --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+      --line:#282D3A; --line-soft:#222732;
+      --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+      --good:#3FC1AF; --good-soft:#122C2A;
+      --warn:#E09A56; --warn-soft:#2F2318;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+    --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+    --line:#282D3A; --line-soft:#222732;
+    --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+    --good:#3FC1AF; --good-soft:#122C2A;
+    --warn:#E09A56; --warn-soft:#2F2318;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"]{
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+  }
+
+  /* Same ageing tokens as the kitchen screen: a red beyond warn, and a true
+     yellow — the shared warn token is burnt orange, and the rule is
+     explicitly green / yellow / red. */
+  :root { --bad:#B42318; --bad-soft:#FBEBE9; --hold:#A16207; --hold-soft:#FBF3E2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bad:#F97066; --bad-soft:#33130F; --hold:#E3B457; --hold-soft:#2C2314; }
+  }
+  :root[data-theme="dark"]{ --bad:#F97066; --bad-soft:#33130F; --hold:#E3B457; --hold-soft:#2C2314; }
+  :root[data-theme="light"]{ --bad:#B42318; --bad-soft:#FBEBE9; --hold:#A16207; --hold-soft:#FBF3E2; }
+
+  * { box-sizing:border-box; }
+  .page { background:var(--ground); color:var(--ink); font-family:var(--sans);
+    font-size:.95rem; line-height:1.55;
+    padding: clamp(1rem,3vw,1.75rem) clamp(.9rem,3vw,1.75rem) 4rem; }
+  .wrap { max-width:78rem; margin:0 auto; }
+
+  .themebar { display:flex; align-items:center; gap:.55rem 1rem; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+    box-shadow:var(--shadow); padding:.6rem .85rem; margin-bottom:1.1rem; }
+  .themebar-label { font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .swatches { display:flex; gap:.4rem; }
+  .sw { width:1.5rem; height:1.5rem; border-radius:999px; cursor:pointer; padding:0;
+    background:var(--c); border:2px solid transparent; box-shadow:0 0 0 1px var(--line) inset; }
+  .sw[aria-pressed="true"] { border-color:var(--surface); box-shadow:0 0 0 2px var(--c); }
+  .sw:focus-visible { outline:2px solid var(--c); outline-offset:2px; }
+  .modes { display:flex; gap:.25rem; margin-left:auto; }
+  .mode { font:inherit; font-size:.76rem; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+    border-radius:999px; padding:.24rem .7rem; }
+  .mode:hover { border-color:var(--brand); color:var(--brand); }
+  .mode[aria-pressed="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .mode:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+
+  .banner { background:var(--warn-soft);
+    border:1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+    border-radius:var(--r); padding:.85rem 1.1rem; margin-bottom:1.1rem;
+    display:flex; gap:.7rem; align-items:baseline; flex-wrap:wrap; }
+  .banner b { color:var(--warn); }
+  .banner span { color:var(--ink-2); font-size:.86rem; }
+
+  .demo { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap;
+    margin-bottom:1.1rem; }
+  .demo-label { font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .dbtn { font:inherit; font-size:.8rem; font-weight:650; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+    border-radius:999px; padding:.35rem .85rem; }
+  .dbtn:hover { border-color:var(--brand); color:var(--brand); }
+  .dbtn:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .dbtn[aria-pressed="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .demo-note { font-size:.75rem; color:var(--ink-3); }
+
+  /* ---------- the board ---------- */
+  .board { background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
+  .board-head { display:flex; align-items:baseline; gap:.8rem; flex-wrap:wrap;
+    padding:.9rem 1.2rem; border-bottom:1px solid var(--line-soft); }
+  .brand-ar { font-size:1.25rem; font-weight:750; }
+  .brand-en { color:var(--ink-2); font-size:.9rem; font-weight:600; }
+  .board-head .clock { margin-left:auto; font-family:var(--mono);
+    font-size:.9rem; color:var(--ink-3); font-variant-numeric:tabular-nums; }
+
+  .halves { display:grid; grid-template-columns:1fr 1fr; min-height:24rem; }
+  .half { padding:1rem 1.1rem 1.4rem; display:flex; flex-direction:column; gap:.8rem; }
+  .half + .half { border-left:1px solid var(--line); }
+  .half.ready { background:color-mix(in srgb, var(--good-soft) 40%, var(--surface)); }
+
+  .half h2 { margin:0; display:flex; align-items:baseline; gap:.6rem; flex-wrap:wrap;
+    font-size:1.05rem; font-weight:750; letter-spacing:-.01em;
+    padding-bottom:.6rem; border-bottom:2px solid var(--line); }
+  .half.prep h2 { color:var(--ink-2); border-bottom-color:var(--ink-3); }
+  .half.ready h2 { color:var(--good); border-bottom-color:var(--good); }
+  .half h2 .ar { font-weight:700; }
+  .half h2 .cnt { margin-left:auto; font-family:var(--mono); font-size:.85rem;
+    color:var(--ink-3); font-variant-numeric:tabular-nums; }
+
+  .olist { list-style:none; margin:0; padding:0;
+    display:flex; flex-direction:column; gap:.55rem; }
+  .onum { font-family:var(--mono); font-weight:800; font-variant-numeric:tabular-nums;
+    text-align:center; border-radius:var(--r-sm); padding:.5rem .6rem;
+    font-size:clamp(1.6rem, 3.2vw, 2.4rem); line-height:1.15; }
+  /* Preparing tiles carry the kitchen's traffic light on their left edge:
+     green under 3:00, yellow 3:00-4:59, red from 5:00 — the same clock the
+     KDS runs, so customer and kitchen always agree on who has waited. */
+  .prep .onum { background:var(--surface-2); color:var(--ink);
+    border:1px solid var(--line); border-left:6px solid var(--line); }
+  .prep .onum.age-fresh { border-left-color:var(--good);
+    background:color-mix(in srgb, var(--good-soft) 45%, var(--surface)); }
+  .prep .onum.age-warn { border-left-color:var(--hold);
+    background:color-mix(in srgb, var(--hold-soft) 55%, var(--surface)); }
+  .prep .onum.age-bad { border-left-color:var(--bad);
+    border-color:color-mix(in srgb, var(--bad) 40%, var(--line));
+    border-left-color:var(--bad);
+    background:color-mix(in srgb, var(--bad-soft) 65%, var(--surface)); }
+  .ready .onum { background:var(--good); border:1px solid var(--good);
+    color:var(--surface); }
+  @media (prefers-reduced-motion: no-preference) {
+    .onum.arrived { animation:arrive .45s ease-out; }
+    @keyframes arrive { from { transform:scale(.85); opacity:.2; } to { transform:scale(1); opacity:1; } }
+  }
+  .empty-side { color:var(--ink-3); font-size:.85rem; text-align:center; padding:1.5rem 0; }
+
+  .board-foot { padding:.7rem 1.2rem; border-top:1px solid var(--line-soft);
+    display:flex; gap:.9rem; flex-wrap:wrap; align-items:baseline; }
+  .board-foot .msg { font-size:.85rem; color:var(--ink-2); }
+  .board-foot .vat { margin-left:auto; font-family:var(--mono); font-size:.72rem;
+    color:var(--ink-3); }
+
+  .foot { margin-top:1.6rem; padding-top:1rem; border-top:1px solid var(--line);
+    font-size:.8rem; color:var(--ink-3); }
+  .foot p { margin:0 0 .4rem; max-width:74ch; }
+</style>
+
+<div class="page">
+<div class="wrap">
+
+  <div class="themebar">
+    <span class="themebar-label">Accent</span>
+    <div class="swatches" id="swatches" role="group" aria-label="Accent colour"></div>
+    <div class="modes" id="modes" role="group" aria-label="Light or dark"></div>
+  </div>
+
+  <div class="banner">
+    <b>Design mockup</b>
+    <span>The customer-facing order board — like a fast-food collection screen. In the real product it is a read-only mirror of kitchen state over the LAN: an order is "Preparing" while its kitchen ticket is open and moves to "Ready" the moment the kitchen bumps it. Nothing here persists; the demo controls below stand in for the kitchen.</span>
+  </div>
+
+  <div class="demo">
+    <span class="demo-label">Demo — not part of the display</span>
+    <button class="dbtn" type="button" id="btn-new">New order</button>
+    <button class="dbtn" type="button" id="btn-adv">Kitchen bumps next</button>
+    <button class="dbtn" type="button" id="btn-auto" aria-pressed="true">Auto-cycle</button>
+    <span class="demo-note" id="autonote"></span>
+  </div>
+
+  <div class="board">
+    <div class="board-head">
+      <span class="brand-ar" dir="rtl">مطعم فاطمة</span>
+      <span class="brand-en">Fatima Restaurant</span>
+      <span class="clock" id="clock">—</span>
+    </div>
+
+    <div class="halves">
+      <section class="half prep" aria-label="Orders being prepared">
+        <h2><span>Preparing</span> <span class="ar" dir="rtl">جاري التحضير</span>
+            <span class="cnt" id="cnt-prep">0</span></h2>
+        <ul class="olist" id="list-prep"></ul>
+        <div class="empty-side" id="empty-prep" hidden>—</div>
+      </section>
+
+      <section class="half ready" aria-label="Orders ready for collection">
+        <h2><span>Ready</span> <span class="ar" dir="rtl">جاهز للاستلام</span>
+            <span class="cnt" id="cnt-ready">0</span></h2>
+        <ul class="olist" id="list-ready"></ul>
+        <div class="empty-side" id="empty-ready" hidden>—</div>
+      </section>
+    </div>
+
+    <div class="board-foot">
+      <span class="msg">Please collect your order when your number turns green · <span dir="rtl">يرجى استلام طلبك عندما يتحول رقمك إلى الأخضر</span></span>
+      <span class="vat">VAT 310000000000003</span>
+    </div>
+  </div>
+
+  <div class="foot">
+    <p><strong>Real here:</strong> the two-lane flow maps one-to-one onto the backend — "Preparing" is a kitchen ticket with status <code>open</code>, "Ready" is status <code>done</code> (bumped), both served by the same queue API the kitchen screens read. Preparing numbers carry the kitchen's traffic light on their left edge — green under 3:00, yellow to 4:59, red from 5:00 — the same clock the KDS runs. The seller identity is the one ZATCA requires on receipts.</p>
+    <p><strong>Not real:</strong> the order numbers and their movement are staged by the demo buttons; ready orders leave the board after a short while as if collected. The display never takes input from customers.</p>
+  </div>
+
+</div>
+</div>
+
+<script>
+/* Theme picker — same tokens and storage keys as every other screen. */
+(function () {
+  "use strict";
+  var PALETTES = [
+    { key:"violet", light:{ brand:"#6D28D9", ink:"#5B21B6", soft:"#F4EFFF", on:"#FFFFFF" },
+      dark:{ brand:"#A78BFA", ink:"#C4B5FD", soft:"#241C3C", on:"#14101F" }, name:"Violet" },
+    { key:"teal", light:{ brand:"#0F766E", ink:"#115E59", soft:"#E6F4F2", on:"#FFFFFF" },
+      dark:{ brand:"#5EEAD4", ink:"#99F6E4", soft:"#132E2C", on:"#0B1F1E" }, name:"Teal" },
+    { key:"green", light:{ brand:"#15803D", ink:"#166534", soft:"#E9F6EC", on:"#FFFFFF" },
+      dark:{ brand:"#6EE7A0", ink:"#A7F3C6", soft:"#12291C", on:"#0A1C12" }, name:"Green" },
+    { key:"blue", light:{ brand:"#1D4ED8", ink:"#1E40AF", soft:"#EAF0FE", on:"#FFFFFF" },
+      dark:{ brand:"#8AB4FF", ink:"#B6CEFF", soft:"#16203A", on:"#0D1526" }, name:"Blue" },
+    { key:"gold", light:{ brand:"#A16207", ink:"#854D0E", soft:"#FBF3E2", on:"#FFFFFF" },
+      dark:{ brand:"#E3B457", ink:"#F0D08A", soft:"#2C2314", on:"#1C1608" }, name:"Gold" },
+    { key:"crimson", light:{ brand:"#BE123C", ink:"#9F1239", soft:"#FDEBEF", on:"#FFFFFF" },
+      dark:{ brand:"#F98BA6", ink:"#FBB6C7", soft:"#331520", on:"#210D14" }, name:"Crimson" }
+  ];
+  var root = document.documentElement, current = "violet", mode = "auto";
+  function remember(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function recall(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function isDark(){
+    var a = root.getAttribute("data-theme");
+    if (a==="dark") return true;
+    if (a==="light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function pal(k){ for (var i=0;i<PALETTES.length;i++) if (PALETTES[i].key===k) return PALETTES[i]; return PALETTES[0]; }
+  function apply(){
+    var p = pal(current)[isDark()?"dark":"light"];
+    root.style.setProperty("--brand",p.brand);
+    root.style.setProperty("--brand-ink",p.ink);
+    root.style.setProperty("--brand-soft",p.soft);
+    root.style.setProperty("--brand-on",p.on);
+  }
+  function swatches(){
+    var h = document.getElementById("swatches"); h.textContent="";
+    PALETTES.forEach(function(p){
+      var b=document.createElement("button");
+      b.type="button"; b.className="sw"; b.title=p.name;
+      b.style.setProperty("--c",p.light.brand);
+      b.setAttribute("aria-label",p.name);
+      b.setAttribute("aria-pressed",p.key===current?"true":"false");
+      b.addEventListener("click",function(){ current=p.key; remember("pos.accent",current); apply(); swatches(); });
+      h.appendChild(b);
+    });
+  }
+  function modesUI(){
+    var h=document.getElementById("modes"); h.textContent="";
+    [["auto","Auto"],["light","Light"],["dark","Dark"]].forEach(function(m){
+      var b=document.createElement("button");
+      b.type="button"; b.className="mode"; b.textContent=m[1];
+      b.setAttribute("aria-pressed",m[0]===mode?"true":"false");
+      b.addEventListener("click",function(){
+        mode=m[0]; remember("pos.mode",mode);
+        if (mode==="auto") root.removeAttribute("data-theme");
+        else root.setAttribute("data-theme",mode);
+        apply(); modesUI();
+      });
+      h.appendChild(b);
+    });
+  }
+  var sp=recall("pos.accent"); if (sp) current=sp;
+  var sm=recall("pos.mode");
+  if (sm){ mode=sm; if (mode!=="auto") root.setAttribute("data-theme",mode); }
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",apply);
+  new MutationObserver(apply).observe(root,{attributes:true,attributeFilter:["data-theme"]});
+  swatches(); modesUI(); apply();
+})();
+</script>
+
+<script>
+/* The board. Preparing = kitchen ticket open; Ready = bumped. The demo stands
+   in for the kitchen: orders join, get bumped oldest-first, and leave the
+   ready lane after a while as if collected. */
+(function () {
+  "use strict";
+
+  // Preparing orders carry the seconds they had already waited when the page
+  // loaded, seeded to show all three age bands at once. Ready keeps numbers only.
+  var t0 = Date.now();
+  var preparing = [
+    { no: 118, base: 340 },   // red: past 5:00
+    { no: 119, base: 250 },   // yellow
+    { no: 120, base: 195 },   // yellow
+    { no: 121, base: 110 },   // green
+    { no: 122, base: 25 }     // green
+  ];
+  var ready = [115, 116, 117];
+  var nextOrder = 123;
+  var justArrived = null;        // ready number to animate
+  var reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
+
+  var listPrep = document.getElementById("list-prep");
+  var listReady = document.getElementById("list-ready");
+
+  function ageOf(o){ return o.base + Math.floor((Date.now() - t0) / 1000); }
+
+  // The kitchen's rule, identical to the KDS screen:
+  // green under 3:00, yellow 3:00-4:59, red from 5:00.
+  function ageClass(s){
+    if (s >= 300) return "age-bad";
+    if (s >= 180) return "age-warn";
+    return "age-fresh";
+  }
+
+  function render(){
+    listPrep.textContent = "";
+    listReady.textContent = "";
+
+    preparing.forEach(function(o){
+      var li = document.createElement("li");
+      li.className = "onum " + ageClass(ageOf(o));
+      li.textContent = o.no;
+      listPrep.appendChild(li);
+    });
+    ready.forEach(function(n){
+      var li = document.createElement("li");
+      li.className = "onum" + (n === justArrived ? " arrived" : "");
+      li.textContent = n;
+      listReady.appendChild(li);
+    });
+    justArrived = null;
+
+    document.getElementById("cnt-prep").textContent = preparing.length;
+    document.getElementById("cnt-ready").textContent = ready.length;
+    document.getElementById("empty-prep").hidden = preparing.length > 0;
+    document.getElementById("empty-ready").hidden = ready.length > 0;
+  }
+
+  function newOrder(){
+    preparing.push({ no: nextOrder, base: 0 });
+    nextOrder += 1;
+    render();
+  }
+
+  // The kitchen works oldest-first, so the board promotes the top of the
+  // preparing lane — never an arbitrary number.
+  function bumpNext(){
+    if (!preparing.length) { return; }
+    var o = preparing.shift();
+    ready.push(o.no);
+    justArrived = o.no;
+    if (ready.length > 6) { ready.shift(); }   // collected and gone
+    render();
+  }
+
+  function collectOldest(){
+    if (ready.length > 3) { ready.shift(); render(); }
+  }
+
+  // Re-evaluate the age bands as time passes so a waiting number turns yellow
+  // and then red without any interaction. A class swap, not an animation, so
+  // it runs under reduced motion too.
+  setInterval(function(){
+    var tiles = listPrep.children;
+    for (var i = 0; i < tiles.length && i < preparing.length; i++) {
+      tiles[i].className = "onum " + ageClass(ageOf(preparing[i]));
+    }
+  }, 1000);
+
+  document.getElementById("btn-new").addEventListener("click", newOrder);
+  document.getElementById("btn-adv").addEventListener("click", bumpNext);
+
+  /* ---- auto-cycle ---- */
+  var auto = true;
+  var timers = [];
+  var autoBtn = document.getElementById("btn-auto");
+  var autoNote = document.getElementById("autonote");
+
+  function startAuto(){
+    stopAuto();
+    if (reduce.matches) {
+      auto = false;
+      autoBtn.setAttribute("aria-pressed", "false");
+      autoNote.textContent = "Paused — reduced motion is on";
+      return;
+    }
+    timers.push(setInterval(bumpNext, 6000));
+    timers.push(setInterval(newOrder, 9000));
+    timers.push(setInterval(collectOldest, 11000));
+    autoNote.textContent = "";
+  }
+  function stopAuto(){
+    timers.forEach(clearInterval);
+    timers = [];
+  }
+
+  autoBtn.addEventListener("click", function(){
+    auto = !auto;
+    autoBtn.setAttribute("aria-pressed", auto ? "true" : "false");
+    if (auto) { startAuto(); } else { stopAuto(); autoNote.textContent = ""; }
+  });
+  reduce.addEventListener("change", function(){
+    if (auto) { startAuto(); }
+  });
+
+  /* ---- clock ---- */
+  function tickClock(){
+    var d = new Date();
+    document.getElementById("clock").textContent =
+      String(d.getHours()).padStart(2,"0") + ":" +
+      String(d.getMinutes()).padStart(2,"0");
+  }
+  timersClock: {
+    tickClock();
+    setInterval(tickClock, 30000);
+  }
+
+  render();
+  if (auto) { startAuto(); }
+})();
+</script>

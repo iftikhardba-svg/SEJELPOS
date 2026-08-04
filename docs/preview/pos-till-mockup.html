@@ -1,0 +1,630 @@
+<title>POS Main Screen — Design Mockup</title>
+<style>
+  :root {
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --r:14px; --r-sm:10px;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+      --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+      --line:#282D3A; --line-soft:#222732;
+      --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+      --good:#3FC1AF; --good-soft:#122C2A;
+      --warn:#E09A56; --warn-soft:#2F2318;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+    --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+    --line:#282D3A; --line-soft:#222732;
+    --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+    --good:#3FC1AF; --good-soft:#122C2A;
+    --warn:#E09A56; --warn-soft:#2F2318;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"]{
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+  }
+
+  * { box-sizing:border-box; }
+  .page { background:var(--ground); color:var(--ink); font-family:var(--sans);
+    font-size:.95rem; line-height:1.55;
+    padding: clamp(1rem,3vw,1.75rem) clamp(.9rem,3vw,1.75rem) 4rem; }
+  .wrap { max-width:78rem; margin:0 auto; }
+
+  .themebar { display:flex; align-items:center; gap:.55rem 1rem; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+    box-shadow:var(--shadow); padding:.6rem .85rem; margin-bottom:1.1rem; }
+  .themebar-label { font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .swatches { display:flex; gap:.4rem; }
+  .sw { width:1.5rem; height:1.5rem; border-radius:999px; cursor:pointer; padding:0;
+    background:var(--c); border:2px solid transparent; box-shadow:0 0 0 1px var(--line) inset; }
+  .sw[aria-pressed="true"] { border-color:var(--surface); box-shadow:0 0 0 2px var(--c); }
+  .sw:focus-visible { outline:2px solid var(--c); outline-offset:2px; }
+  .modes { display:flex; gap:.25rem; margin-left:auto; }
+  .mode { font:inherit; font-size:.76rem; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+    border-radius:999px; padding:.24rem .7rem; }
+  .mode:hover { border-color:var(--brand); color:var(--brand); }
+  .mode[aria-pressed="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .mode:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+
+  .banner { background:var(--warn-soft);
+    border:1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+    border-radius:var(--r); padding:.85rem 1.1rem; margin-bottom:1.2rem;
+    display:flex; gap:.7rem; align-items:baseline; flex-wrap:wrap; }
+  .banner b { color:var(--warn); }
+  .banner span { color:var(--ink-2); font-size:.86rem; }
+
+  .titlebar { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .logo { width:32px;height:32px;border-radius:9px;background:var(--brand);color:var(--brand-on);
+    display:grid;place-items:center;font-weight:700;flex:none; }
+  .titlebar h1 { font-size:1.15rem; font-weight:680; letter-spacing:-.02em; margin:0; }
+  .titlebar .sub { color:var(--ink-3); font-size:.82rem; }
+  .grow { flex:1 1 auto; }
+  .pill { display:inline-flex; align-items:center; gap:.4rem;
+    font-size:.72rem; font-weight:700; color:var(--good); background:var(--good-soft);
+    border:1px solid color-mix(in srgb, var(--good) 30%, transparent);
+    border-radius:999px; padding:.28rem .75rem; white-space:nowrap; }
+  .pill .dot { width:.5rem; height:.5rem; border-radius:999px; background:var(--good); }
+  .ordno { font-family:var(--mono); font-weight:800; font-size:1.35rem;
+    color:var(--brand); font-variant-numeric:tabular-nums; }
+  .ordno small { font-size:.68rem; font-weight:700; color:var(--ink-3);
+    letter-spacing:.06em; text-transform:uppercase; display:block; line-height:1; }
+
+  /* ---- sale type strip: the defining control of this screen ---- */
+  .types { display:flex; gap:.5rem; overflow-x:auto; padding-bottom:.2rem; margin-bottom:1rem; }
+  .stype { font:inherit; cursor:pointer; flex:none;
+    border:1.5px solid var(--line); background:var(--surface); color:var(--ink);
+    border-radius:var(--r-sm); padding:.55rem .95rem;
+    display:flex; flex-direction:column; align-items:flex-start; gap:.1rem; }
+  .stype:hover { border-color:var(--brand); }
+  .stype:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .stype[aria-pressed="true"] { border-color:var(--brand); background:var(--brand-soft); }
+  .st-name { font-weight:700; font-size:.88rem; }
+  .st-tier { font-family:var(--mono); font-size:.64rem; color:var(--ink-3);
+    letter-spacing:.05em; text-transform:uppercase; }
+  .stype.agg .st-tier { color:var(--warn); font-weight:700; }
+  .st-chip { font-size:.62rem; font-weight:650; color:var(--brand);
+    background:var(--brand-soft); border-radius:999px; padding:.08rem .5rem; margin-top:.12rem; }
+
+  .refbar { display:none; margin-bottom:1rem; }
+  .refbar.show { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;
+    background:var(--warn-soft);
+    border:1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+    border-radius:var(--r-sm); padding:.6rem .85rem; }
+  .refbar label { font-size:.8rem; font-weight:650; color:var(--warn); }
+  .refbar input { font:inherit; font-family:var(--mono); font-size:.85rem;
+    border:1px solid var(--line); border-radius:8px; padding:.4rem .6rem;
+    background:var(--surface); color:var(--ink); min-width:14rem; }
+  .refbar input:focus-visible { outline:2px solid var(--warn); outline-offset:1px; }
+  .refbar .hint { font-size:.72rem; color:var(--ink-2); flex-basis:100%; }
+
+  .cols { display:grid; gap:.9rem; align-items:start; grid-template-columns:1fr; }
+  @media (min-width:60rem){ .cols { grid-template-columns:1fr 22rem; } }
+  .panel { background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
+
+  .tabs { display:flex; gap:.4rem; padding:.7rem; overflow-x:auto; border-bottom:1px solid var(--line-soft); }
+  .tab { font:inherit; font-size:.83rem; font-weight:600; white-space:nowrap;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+    padding:.45rem .85rem; border-radius:999px; cursor:pointer; }
+  .tab:hover { border-color:var(--brand); color:var(--brand); }
+  .tab[aria-selected="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .tab:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+
+  .grid { display:grid; gap:.6rem; padding:.85rem;
+    grid-template-columns:repeat(auto-fill, minmax(9.5rem,1fr)); }
+  .item { font:inherit; text-align:left; cursor:pointer;
+    background:var(--surface-2); border:1px solid var(--line);
+    border-radius:var(--r-sm); padding:.7rem .75rem .65rem;
+    display:flex; flex-direction:column; gap:.35rem; min-height:5.2rem;
+    transition:border-color .12s, transform .08s; }
+  .item:hover { border-color:var(--brand); }
+  .item:active { transform:scale(.98); }
+  .item:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .item .nm { font-size:.8rem; font-weight:620; line-height:1.3; }
+  .item .pr { margin-top:auto; font-family:var(--mono); font-size:.82rem;
+    font-weight:700; color:var(--brand); font-variant-numeric:tabular-nums; }
+  .item .pr .was { color:var(--ink-3); text-decoration:line-through;
+    font-weight:500; margin-right:.35rem; }
+
+  .cart { display:flex; flex-direction:column; }
+  .cart-head { padding:.8rem .95rem; border-bottom:1px solid var(--line-soft);
+    display:flex; align-items:baseline; justify-content:space-between; gap:.6rem; }
+  .cart-head h2 { font-size:.95rem; font-weight:680; margin:0; }
+  .cart-head .rcpt { font-family:var(--mono); font-size:.75rem; color:var(--ink-3); }
+  .lines { list-style:none; margin:0; padding:.5rem; display:flex; flex-direction:column;
+    gap:.3rem; max-height:17rem; overflow-y:auto; }
+  .empty { padding:2.2rem 1rem; text-align:center; color:var(--ink-3); font-size:.85rem; }
+  .line { display:grid; grid-template-columns:1fr auto; gap:.15rem .6rem;
+    padding:.5rem .55rem; border-radius:var(--r-sm); background:var(--surface-2); }
+  .line .nm { font-size:.8rem; font-weight:600; line-height:1.3; }
+  .line .amt { font-family:var(--mono); font-size:.8rem; font-weight:700;
+    font-variant-numeric:tabular-nums; }
+  .qty { display:flex; align-items:center; gap:.3rem; }
+  .qbtn { font:inherit; width:1.5rem; height:1.5rem; line-height:1; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface); color:var(--ink-2);
+    border-radius:6px; display:grid; place-items:center; font-size:.9rem; font-weight:700; }
+  .qbtn:hover { border-color:var(--brand); color:var(--brand); }
+  .qbtn:focus-visible { outline:2px solid var(--brand); outline-offset:1px; }
+  .qn { font-family:var(--mono); font-size:.78rem; min-width:1.4rem; text-align:center;
+    font-variant-numeric:tabular-nums; }
+
+  .kchips { display:none; }
+  .kchips.show { display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;
+    padding:.15rem .95rem .55rem; }
+  .klabel { font-size:.66rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .kchip { font-family:var(--mono); font-size:.7rem; color:var(--ink-2);
+    background:var(--surface-2); border:1px solid var(--line);
+    border-radius:999px; padding:.14rem .55rem; font-variant-numeric:tabular-nums; }
+
+  .totals { padding:.75rem .95rem; border-top:1px solid var(--line-soft);
+    display:flex; flex-direction:column; gap:.3rem; }
+  .trow { display:flex; justify-content:space-between; font-size:.83rem; color:var(--ink-2); }
+  .trow b { font-family:var(--mono); font-variant-numeric:tabular-nums;
+    color:var(--ink-2); font-weight:600; }
+  .trow.grand { font-size:1.05rem; color:var(--ink); font-weight:700;
+    padding-top:.35rem; border-top:1px dashed var(--line); }
+  .trow.grand b { font-size:1.05rem; color:var(--ink); font-weight:800; }
+
+  .pays { padding:.75rem .95rem 1rem; display:grid; gap:.45rem;
+    grid-template-columns:1fr 1fr; border-top:1px solid var(--line-soft); }
+  .pay { font:inherit; font-size:.82rem; font-weight:650; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+    border-radius:var(--r-sm); padding:.55rem .5rem; }
+  .pay:hover:not(:disabled) { border-color:var(--brand); color:var(--brand); }
+  .pay:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .pay:disabled { opacity:.45; cursor:not-allowed; }
+  .pay.primary { grid-column:1/-1; background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .pay.primary:hover:not(:disabled) { background:var(--brand-ink); color:var(--brand-on); }
+
+  .done { margin-top:1rem; padding:1rem 1.1rem; border-radius:var(--r);
+    background:var(--good-soft);
+    border:1px solid color-mix(in srgb, var(--good) 30%, transparent);
+    display:none; align-items:center; gap:.6rem 1rem; flex-wrap:wrap; }
+  .done.show { display:flex; }
+  .done .big { font-family:var(--mono); font-weight:800; font-size:2rem;
+    color:var(--good); font-variant-numeric:tabular-nums; }
+  .done .msg { font-size:.85rem; color:var(--ink-2); max-width:40ch; }
+  .dchips { flex-basis:100%; display:flex; gap:.4rem; flex-wrap:wrap; }
+  .dchip { font-family:var(--mono); font-size:.72rem; color:var(--ink-2);
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:999px; padding:.2rem .65rem; }
+
+  .toast { position:fixed; left:50%; bottom:1.4rem; z-index:50;
+    transform:translate(-50%,.6rem); opacity:0; pointer-events:none;
+    background:var(--ink); color:var(--ground); font-size:.82rem; font-weight:600;
+    border-radius:999px; padding:.5rem 1.05rem; box-shadow:var(--shadow);
+    transition:opacity .18s ease, transform .18s ease; }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast { transition:none; transform:translate(-50%,0); }
+    .item { transition:none; }
+    .item:active { transform:none; }
+  }
+
+  .foot { margin-top:1.6rem; padding-top:1rem; border-top:1px solid var(--line);
+    font-size:.8rem; color:var(--ink-3); }
+  .foot p { margin:0 0 .4rem; max-width:74ch; }
+</style>
+
+<div class="page">
+<div class="wrap">
+
+  <div class="themebar">
+    <span class="themebar-label">Accent</span>
+    <div class="swatches" id="swatches" role="group" aria-label="Accent colour"></div>
+    <div class="modes" id="modes" role="group" aria-label="Light or dark"></div>
+  </div>
+
+  <div class="banner">
+    <b>Design mockup</b>
+    <span>Real on this screen: the menu, both price tiers, the sale types and the kitchen routing are all imported from PixelPoint. Not real: nothing persists, no invoice is signed or sent anywhere, and the KDS / CDS status shown after checkout is illustrative.</span>
+  </div>
+
+  <div class="titlebar">
+    <div class="logo">P</div>
+    <div>
+      <h1>POS — Arid Branch</h1>
+      <div class="sub">Tablet T01 · Cashier</div>
+    </div>
+    <div class="grow"></div>
+    <span class="pill"><span class="dot"></span>Offline · can still sell</span>
+    <div class="ordno"><small>Order</small><span id="ordno">124</span></div>
+  </div>
+
+  <div class="types" id="types" role="group" aria-label="Order type"></div>
+
+  <div class="refbar" id="refbar">
+    <label for="refinput">Aggregator order no.</label>
+    <input id="refinput" type="text" placeholder="e.g. KEETA-58211" autocomplete="off">
+    <span class="hint">Required for this order type — without it a disputed order cannot be matched against the platform. The old system never captured this on 9,641 aggregator orders.</span>
+  </div>
+
+  <div class="cols">
+    <div class="panel">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="panel cart">
+      <div class="cart-head">
+        <h2 id="carttitle">Drive Thru</h2>
+        <span class="rcpt" id="receiptno">T01-000124</span>
+      </div>
+      <ul class="lines" id="lines"></ul>
+      <div class="kchips" id="kchips"></div>
+      <div class="totals">
+        <div class="trow"><span>Subtotal (excl. VAT)</span><b id="t-net">0.00</b></div>
+        <div class="trow"><span>VAT 15%</span><b id="t-vat">0.00</b></div>
+        <div class="trow grand"><span>Total</span><b id="t-tot">0.00</b></div>
+      </div>
+      <div class="pays">
+        <button type="button" class="pay" id="p-cash" disabled>CASH</button>
+        <button type="button" class="pay" id="p-card" disabled>Visa / MC</button>
+        <button type="button" class="pay primary" id="p-mada" disabled>Charge · MADA</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="done" id="done">
+    <div class="big" id="done-no">—</div>
+    <div class="msg"><strong>Order placed.</strong> The number is called when the food is up. The status chips below are illustrative — no KDS or CDS is connected in this mockup.</div>
+    <div class="dchips">
+      <span class="dchip" id="chip-kds"></span>
+      <span class="dchip" id="chip-cds"></span>
+    </div>
+  </div>
+
+  <div class="foot">
+    <p><strong>Real here:</strong> the menu, both price tiers and the sale types come from PixelPoint's catalog, and the kitchen routing comes from each product's PRINTLOC bitmask — mapped to the Expo, Grill, Shawarma and DT stations, named after the ports in their printer configuration. MADA is the lead payment button because 65% of this restaurant's payments are MADA.</p>
+    <p><strong>Not real:</strong> nothing persists, no invoice is signed, and the KDS / CDS links are illustrative — the order number resets on reload.</p>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+</div>
+</div>
+
+<script>
+/* Theme picker — same tokens across all three mockups. */
+(function () {
+  "use strict";
+  var PALETTES = [
+    { key:"violet", light:{ brand:"#6D28D9", ink:"#5B21B6", soft:"#F4EFFF", on:"#FFFFFF" },
+      dark:{ brand:"#A78BFA", ink:"#C4B5FD", soft:"#241C3C", on:"#14101F" }, name:"Violet" },
+    { key:"teal", light:{ brand:"#0F766E", ink:"#115E59", soft:"#E6F4F2", on:"#FFFFFF" },
+      dark:{ brand:"#5EEAD4", ink:"#99F6E4", soft:"#132E2C", on:"#0B1F1E" }, name:"Teal" },
+    { key:"green", light:{ brand:"#15803D", ink:"#166534", soft:"#E9F6EC", on:"#FFFFFF" },
+      dark:{ brand:"#6EE7A0", ink:"#A7F3C6", soft:"#12291C", on:"#0A1C12" }, name:"Green" },
+    { key:"blue", light:{ brand:"#1D4ED8", ink:"#1E40AF", soft:"#EAF0FE", on:"#FFFFFF" },
+      dark:{ brand:"#8AB4FF", ink:"#B6CEFF", soft:"#16203A", on:"#0D1526" }, name:"Blue" },
+    { key:"gold", light:{ brand:"#A16207", ink:"#854D0E", soft:"#FBF3E2", on:"#FFFFFF" },
+      dark:{ brand:"#E3B457", ink:"#F0D08A", soft:"#2C2314", on:"#1C1608" }, name:"Gold" },
+    { key:"crimson", light:{ brand:"#BE123C", ink:"#9F1239", soft:"#FDEBEF", on:"#FFFFFF" },
+      dark:{ brand:"#F98BA6", ink:"#FBB6C7", soft:"#331520", on:"#210D14" }, name:"Crimson" }
+  ];
+  var root = document.documentElement, current = "violet", mode = "auto";
+  function remember(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function recall(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function isDark(){
+    var a = root.getAttribute("data-theme");
+    if (a==="dark") return true;
+    if (a==="light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function pal(k){ for (var i=0;i<PALETTES.length;i++) if (PALETTES[i].key===k) return PALETTES[i]; return PALETTES[0]; }
+  function apply(){
+    var p = pal(current)[isDark()?"dark":"light"];
+    root.style.setProperty("--brand",p.brand);
+    root.style.setProperty("--brand-ink",p.ink);
+    root.style.setProperty("--brand-soft",p.soft);
+    root.style.setProperty("--brand-on",p.on);
+  }
+  function swatches(){
+    var h = document.getElementById("swatches"); h.textContent="";
+    PALETTES.forEach(function(p){
+      var b=document.createElement("button");
+      b.type="button"; b.className="sw"; b.title=p.name;
+      b.style.setProperty("--c",p.light.brand);
+      b.setAttribute("aria-label",p.name);
+      b.setAttribute("aria-pressed",p.key===current?"true":"false");
+      b.addEventListener("click",function(){ current=p.key; remember("pos.accent",current); apply(); swatches(); });
+      h.appendChild(b);
+    });
+  }
+  function modesUI(){
+    var h=document.getElementById("modes"); h.textContent="";
+    [["auto","Auto"],["light","Light"],["dark","Dark"]].forEach(function(m){
+      var b=document.createElement("button");
+      b.type="button"; b.className="mode"; b.textContent=m[1];
+      b.setAttribute("aria-pressed",m[0]===mode?"true":"false");
+      b.addEventListener("click",function(){
+        mode=m[0]; remember("pos.mode",mode);
+        if (mode==="auto") root.removeAttribute("data-theme");
+        else root.setAttribute("data-theme",mode);
+        apply(); modesUI();
+      });
+      h.appendChild(b);
+    });
+  }
+  var sp=recall("pos.accent"); if (sp) current=sp;
+  var sm=recall("pos.mode");
+  if (sm){ mode=sm; if (mode!=="auto") root.setAttribute("data-theme",mode); }
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",apply);
+  new MutationObserver(apply).observe(root,{attributes:true,attributeFilter:["data-theme"]});
+  swatches(); modesUI(); apply();
+})();
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  // Real sale types from PixelPoint. tier is ForcePrice mapped to a letter;
+  // Keeta/HungerStation really do charge tier B in their history.
+  // Dine-In would open the floor plan in the real app — here it only hints.
+  var SALE_TYPES = [
+    { no:2025, name:"Drive Thru",    tier:"a", agg:false, floor:false },
+    { no:1006, name:"TakeAway",      tier:"a", agg:false, floor:false },
+    { no:1001, name:"Dine-In",       tier:"a", agg:false, floor:true },
+    { no:2004, name:"Keeta",         tier:"b", agg:true,  floor:false },
+    { no:2002, name:"HungerStation", tier:"b", agg:true,  floor:false }
+  ];
+
+  // Real products with their real tier A and tier B prices (halalas) and
+  // their kitchen stations, decoded from PixelPoint's PRINTLOC bitmask.
+  // An empty stations array means no kitchen ticket — cold or prepacked.
+  // [prodnum, name, tierA, tierB, stations]
+  var MENU = [
+    { name:"Appetizers", items:[
+      [2008,"MOUSHAKAL SABAH",3800,3900,[]],
+      [2012,"MOUSHAKAL FATIMA",3800,3900,[]],
+      [2013,"HUMMOS",800,900,[]],
+      [2150,"Hummos Zaatar",2200,2600,[]],
+      [2152,"Hummos Lahm",2400,2900,["Grill","DT"]],
+      [2316,"Grape Leaves 12P",2500,2500,[]] ]},
+    { name:"Grills", items:[
+      [2160,"SHISH TAW 2SW",3000,3700,[]],
+      [2111,"AWSAL LAHM 2SW",3900,3900,[]],
+      [2119,"KEBAB LAHM 4 (LEBNANI)",4900,5900,[]],
+      [2203,"HALF KILLO GRILLS",9800,9900,[]],
+      [2451,"KABSA MASHAWI 1/2 KG",9900,9900,["Grill","DT"]],
+      [2476,"Single Smash Burger",1500,2400,[]] ]},
+    { name:"Sandwiches", items:[
+      [2060,"SHAWARMA LAHAM LARGE",1500,2000,[]],
+      [2061,"SHAWARMA LAHAM SMALL",800,900,[]],
+      [2058,"Shawa Sandw Ckn",500,700,["Shawarma"]],
+      [2070,"KABAB LAHAM LARGE",1600,2000,["Grill"]] ]},
+    { name:"Beverages", items:[
+      [2135,"ORANGE MEDIUM",900,1000,[]],
+      [2145,"COCA COLA MEDIUM",300,500,[]],
+      [2499,"Water Small",100,200,["Expo","Grill","DT"]] ]}
+  ];
+
+  var STATION_ORDER = ["Expo","Grill","Shawarma","DT"];
+  var VAT = 15;
+  var saleType = SALE_TYPES[0];
+  var activeCat = 0;
+  var cart = [];            // {id, name, prices:[a,b], stations, qty}
+  var orderSeq = 124;
+  var toastTimer = null;
+
+  function fmt(h){ var s=h<0?"-":"",a=Math.abs(h);
+    return s+Math.floor(a/100)+"."+String(a%100).padStart(2,"0"); }
+  function split(gross){ var net=Math.round(gross*100/(100+VAT));
+    return {net:net,vat:gross-net,gross:gross}; }
+
+  // The price of an item under the CURRENT sale type. Tier B when the order
+  // came from an aggregator — the difference is their commission.
+  function priceOf(it){ return saleType.tier==="b" ? it[3] : it[2]; }
+  function linePrice(l){ return saleType.tier==="b" ? l.prices[1] : l.prices[0]; }
+
+  function toast(msg){
+    var t=document.getElementById("toast");
+    t.textContent=msg;
+    t.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer=setTimeout(function(){ t.classList.remove("show"); },2400);
+  }
+
+  // Which stations the current cart routes to, in fixed station order,
+  // with the total quantity headed to each.
+  function stationCounts(){
+    var m={};
+    cart.forEach(function(l){
+      l.stations.forEach(function(s){ m[s]=(m[s]||0)+l.qty; });
+    });
+    return STATION_ORDER.filter(function(s){ return m[s]; })
+      .map(function(s){ return {name:s,count:m[s]}; });
+  }
+
+  function renderTypes(){
+    var host=document.getElementById("types"); host.textContent="";
+    SALE_TYPES.forEach(function(st){
+      var b=document.createElement("button");
+      b.type="button"; b.className="stype"+(st.agg?" agg":"");
+      b.setAttribute("aria-pressed",st.no===saleType.no?"true":"false");
+      var n=document.createElement("span"); n.className="st-name"; n.textContent=st.name;
+      var t=document.createElement("span"); t.className="st-tier";
+      t.textContent=st.agg?"Tier B · aggregator":"Tier A";
+      b.appendChild(n); b.appendChild(t);
+      if (st.floor){
+        var c=document.createElement("span"); c.className="st-chip";
+        c.textContent="opens floor plan";
+        b.appendChild(c);
+      }
+      b.addEventListener("click",function(){
+        saleType=st; renderTypes(); renderGrid(); renderCart(); renderRefbar();
+        document.getElementById("carttitle").textContent=st.name;
+        document.getElementById("done").classList.remove("show");
+        if (st.floor) toast("Floor plan opens here in the real app");
+      });
+      host.appendChild(b);
+    });
+  }
+
+  function renderRefbar(){
+    document.getElementById("refbar").classList.toggle("show", saleType.agg);
+  }
+
+  function renderTabs(){
+    var host=document.getElementById("tabs"); host.textContent="";
+    MENU.forEach(function(cat,i){
+      var b=document.createElement("button");
+      b.type="button"; b.className="tab"; b.setAttribute("role","tab");
+      b.textContent=cat.name;
+      b.setAttribute("aria-selected",i===activeCat?"true":"false");
+      b.addEventListener("click",function(){ activeCat=i; renderTabs(); renderGrid(); });
+      host.appendChild(b);
+    });
+  }
+
+  function renderGrid(){
+    var host=document.getElementById("grid"); host.textContent="";
+    MENU[activeCat].items.forEach(function(it){
+      var b=document.createElement("button");
+      b.type="button"; b.className="item";
+      var nm=document.createElement("span"); nm.className="nm"; nm.textContent=it[1];
+      var pr=document.createElement("span"); pr.className="pr";
+      if (saleType.tier==="b"){
+        var was=document.createElement("span"); was.className="was";
+        was.textContent=fmt(it[2]);
+        pr.appendChild(was);
+        pr.appendChild(document.createTextNode(fmt(it[3])));
+      } else {
+        pr.textContent=fmt(priceOf(it));
+      }
+      b.appendChild(nm); b.appendChild(pr);
+      b.addEventListener("click",function(){ add(it); });
+      host.appendChild(b);
+    });
+  }
+
+  function add(it){
+    var f=cart.filter(function(l){ return l.id===it[0]; })[0];
+    if (f) f.qty+=1;
+    else cart.push({id:it[0],name:it[1],prices:[it[2],it[3]],stations:it[4],qty:1});
+    document.getElementById("done").classList.remove("show");
+    renderCart();
+  }
+  function bump(id,by){
+    var l=cart.filter(function(x){ return x.id===id; })[0];
+    if (!l) return;
+    l.qty+=by;
+    if (l.qty<=0) cart=cart.filter(function(x){ return x.id!==id; });
+    renderCart();
+  }
+  function totals(){
+    var gross=cart.reduce(function(s,l){ return s+linePrice(l)*l.qty; },0);
+    var net=cart.reduce(function(s,l){ return s+split(linePrice(l)*l.qty).net; },0);
+    return {gross:gross,net:net,vat:gross-net};
+  }
+
+  function renderKitchen(){
+    var host=document.getElementById("kchips"); host.textContent="";
+    var st=stationCounts();
+    if (!st.length){ host.classList.remove("show"); return; }
+    host.classList.add("show");
+    var lab=document.createElement("span"); lab.className="klabel";
+    lab.textContent="Kitchen";
+    host.appendChild(lab);
+    st.forEach(function(s){
+      var c=document.createElement("span"); c.className="kchip";
+      c.textContent=s.name+" ×"+s.count;
+      host.appendChild(c);
+    });
+  }
+
+  function renderCart(){
+    var host=document.getElementById("lines"); host.textContent="";
+    if (!cart.length){
+      var li=document.createElement("li"); li.className="empty";
+      li.textContent="Tap an item to start the order";
+      host.appendChild(li);
+    }
+    cart.forEach(function(l){
+      var li=document.createElement("li"); li.className="line";
+      var nm=document.createElement("span"); nm.className="nm"; nm.textContent=l.name;
+      var amt=document.createElement("span"); amt.className="amt";
+      amt.textContent=fmt(linePrice(l)*l.qty);
+      var q=document.createElement("span"); q.className="qty";
+      var minus=document.createElement("button"); minus.className="qbtn"; minus.type="button";
+      minus.textContent="−"; minus.setAttribute("aria-label","One fewer "+l.name);
+      minus.addEventListener("click",function(){ bump(l.id,-1); });
+      var n=document.createElement("span"); n.className="qn"; n.textContent=l.qty;
+      var plus=document.createElement("button"); plus.className="qbtn"; plus.type="button";
+      plus.textContent="+"; plus.setAttribute("aria-label","One more "+l.name);
+      plus.addEventListener("click",function(){ bump(l.id,1); });
+      q.appendChild(minus); q.appendChild(n); q.appendChild(plus);
+      var each=document.createElement("span"); each.className="qn";
+      each.style.textAlign="right"; each.style.color="var(--ink-3)";
+      each.textContent=fmt(linePrice(l));
+      li.appendChild(nm); li.appendChild(amt); li.appendChild(q); li.appendChild(each);
+      host.appendChild(li);
+    });
+
+    renderKitchen();
+
+    var t=totals();
+    document.getElementById("t-net").textContent=fmt(t.net);
+    document.getElementById("t-vat").textContent=fmt(t.vat);
+    document.getElementById("t-tot").textContent=fmt(t.gross);
+    ["p-cash","p-card","p-mada"].forEach(function(id){
+      document.getElementById(id).disabled = cart.length===0;
+    });
+  }
+
+  function charge(){
+    if (!cart.length) return;
+    if (saleType.agg){
+      var ref=document.getElementById("refinput").value.trim();
+      if (!ref){
+        document.getElementById("refinput").focus();
+        return;   // the till refuses: an aggregator order needs its reference
+      }
+    }
+    var st=stationCounts();
+    var kds=document.getElementById("chip-kds");
+    if (st.length){
+      kds.textContent="→ KDS: sent to "+st.map(function(s){ return s.name; }).join(", ");
+    } else {
+      kds.textContent="→ KDS: no kitchen ticket — cold / prepacked only";
+    }
+    document.getElementById("chip-cds").textContent="→ CDS: showing thank-you";
+    var no=orderSeq++;
+    document.getElementById("done-no").textContent=no;
+    document.getElementById("done").classList.add("show");
+    document.getElementById("ordno").textContent=orderSeq;
+    document.getElementById("receiptno").textContent=
+      "T01-"+String(orderSeq).padStart(6,"0");
+    cart=[]; document.getElementById("refinput").value="";
+    renderCart();
+  }
+  ["p-cash","p-card","p-mada"].forEach(function(id){
+    document.getElementById(id).addEventListener("click",charge);
+  });
+
+  renderTypes(); renderRefbar(); renderTabs(); renderGrid(); renderCart();
+})();
+</script>

@@ -1,0 +1,615 @@
+<title>POS Floor Plan — Design Mockup</title>
+<style>
+  :root {
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --free:#0E9384;   --free-soft:#E6F5F3;
+    --busy:#B54708;   --busy-soft:#FDF0E6;
+    --held:#1D4ED8;   --held-soft:#EAF0FE;
+    --off:#8A93A6;    --off-soft:#F1F2F5;
+    --r:14px; --r-sm:10px;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+      --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+      --line:#282D3A; --line-soft:#222732;
+      --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+      --free:#3FC1AF; --free-soft:#122C2A;
+      --busy:#E09A56; --busy-soft:#2F2318;
+      --held:#8AB4FF; --held-soft:#16203A;
+      --off:#6B7383;  --off-soft:#1C2029;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+    --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+    --line:#282D3A; --line-soft:#222732;
+    --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+    --free:#3FC1AF; --free-soft:#122C2A;
+    --busy:#E09A56; --busy-soft:#2F2318;
+    --held:#8AB4FF; --held-soft:#16203A;
+    --off:#6B7383;  --off-soft:#1C2029;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"]{
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --free:#0E9384; --free-soft:#E6F5F3;
+    --busy:#B54708; --busy-soft:#FDF0E6;
+    --held:#1D4ED8; --held-soft:#EAF0FE;
+    --off:#8A93A6;  --off-soft:#F1F2F5;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+  }
+
+  * { box-sizing:border-box; }
+
+  .page {
+    background:var(--ground); color:var(--ink);
+    font-family:var(--sans); font-size:.95rem; line-height:1.55;
+    padding: clamp(1rem,3vw,1.75rem) clamp(.9rem,3vw,1.75rem) 4rem;
+  }
+  .wrap { max-width:78rem; margin:0 auto; }
+
+  .banner {
+    background:var(--busy-soft);
+    border:1px solid color-mix(in srgb, var(--busy) 26%, transparent);
+    border-radius:var(--r); padding:.85rem 1.1rem; margin-bottom:1.2rem;
+    display:flex; gap:.7rem; align-items:baseline; flex-wrap:wrap;
+  }
+  .banner b { color:var(--busy); }
+  .banner span { color:var(--ink-2); font-size:.86rem; }
+
+  .themebar {
+    display:flex; align-items:center; gap:.55rem 1rem; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--r); box-shadow:var(--shadow);
+    padding:.6rem .85rem; margin-bottom:1.1rem;
+  }
+  .themebar-label { font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .swatches { display:flex; gap:.4rem; }
+  .sw { width:1.5rem; height:1.5rem; border-radius:999px; cursor:pointer; padding:0;
+    background:var(--c); border:2px solid transparent; box-shadow:0 0 0 1px var(--line) inset; }
+  .sw[aria-pressed="true"] { border-color:var(--surface); box-shadow:0 0 0 2px var(--c); }
+  .sw:focus-visible { outline:2px solid var(--c); outline-offset:2px; }
+  .modes { display:flex; gap:.25rem; margin-left:auto; }
+  .mode { font:inherit; font-size:.76rem; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+    border-radius:999px; padding:.24rem .7rem; }
+  .mode:hover { border-color:var(--brand); color:var(--brand); }
+  .mode[aria-pressed="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .mode:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+
+  .titlebar { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .logo { width:32px;height:32px;border-radius:9px;background:var(--brand);color:var(--brand-on);
+    display:grid;place-items:center;font-weight:700;flex:none; }
+  .titlebar h1 { font-size:1.15rem; font-weight:680; letter-spacing:-.02em; margin:0; }
+  .titlebar .sub { color:var(--ink-3); font-size:.82rem; }
+  .grow { flex:1 1 auto; }
+
+  /* ---- summary tiles ---- */
+  .tiles { display:grid; gap:.7rem; grid-template-columns:repeat(2,1fr); margin-bottom:1.1rem; }
+  @media (min-width:44rem){ .tiles { grid-template-columns:repeat(4,1fr); } }
+  .tile {
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+    padding:.75rem .9rem .85rem; box-shadow:var(--shadow);
+    display:flex; flex-direction:column; gap:.1rem;
+  }
+  .tile-l { font-size:.7rem; font-weight:700; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .tile-v { font-size:1.5rem; font-weight:700; letter-spacing:-.03em;
+    font-variant-numeric:tabular-nums; line-height:1.15; }
+  .tile.t-free .tile-v { color:var(--free); }
+  .tile.t-busy .tile-v { color:var(--busy); }
+  .tile.t-held .tile-v { color:var(--held); }
+
+  /* ---- layout ---- */
+  .cols { display:grid; gap:.9rem; align-items:start; grid-template-columns:1fr; }
+  @media (min-width:62rem){ .cols { grid-template-columns:1fr 21rem; } }
+
+  .panel { background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
+  .panel-head {
+    padding:.7rem .95rem; border-bottom:1px solid var(--line-soft);
+    display:flex; align-items:center; justify-content:space-between; gap:.7rem; flex-wrap:wrap;
+  }
+  .panel-head h2 { font-size:.95rem; font-weight:680; margin:0; letter-spacing:-.01em; }
+
+  .legend { display:flex; gap:.7rem; flex-wrap:wrap; font-size:.74rem; color:var(--ink-2); }
+  .key { display:inline-flex; align-items:center; gap:.32rem; }
+  .dot { width:.66rem; height:.66rem; border-radius:3px; }
+  .k-free .dot { background:var(--free); }
+  .k-busy .dot { background:var(--busy); }
+  .k-held .dot { background:var(--held); }
+  .k-off  .dot { background:var(--off); }
+
+  .plan { padding:1rem; overflow-x:auto; }
+  .plan-grid { position:relative; min-height:16rem; }
+
+  .table {
+    position:absolute; font:inherit; cursor:pointer; padding:.3rem;
+    border-radius:var(--r-sm); border:1.5px solid var(--free);
+    background:var(--free-soft); color:var(--ink);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:.05rem; transition:transform .08s;
+  }
+  .table.round { border-radius:50%; }
+  .table:hover { transform:translateY(-1px); }
+  .table:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .table.busy { border-color:var(--busy); background:var(--busy-soft); }
+  .table.held { border-color:var(--held); background:var(--held-soft); }
+  .table.off  { border-color:var(--off); background:var(--off-soft); opacity:.55; cursor:not-allowed; }
+  .table[aria-pressed="true"] { box-shadow:0 0 0 3px var(--brand); }
+  .t-no { font-weight:750; font-size:.9rem; line-height:1; font-variant-numeric:tabular-nums; }
+  .t-meta { font-size:.62rem; color:var(--ink-3); line-height:1.15; }
+  .t-amt { font-family:var(--mono); font-size:.62rem; font-weight:700; color:var(--busy); line-height:1.15; }
+
+  /* ---- side panel ---- */
+  .side { display:flex; flex-direction:column; }
+  .side-body { padding:.85rem .95rem; display:flex; flex-direction:column; gap:.6rem; }
+  .empty { padding:2.5rem 1rem; text-align:center; color:var(--ink-3); font-size:.85rem; }
+
+  .row { display:flex; justify-content:space-between; gap:.8rem; font-size:.83rem; }
+  .row span { color:var(--ink-2); }
+  .row b { font-variant-numeric:tabular-nums; }
+
+  .lines { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:.3rem;
+    max-height:14rem; overflow-y:auto; }
+  .lines li { display:grid; grid-template-columns:1fr auto; gap:.1rem .6rem;
+    padding:.45rem .55rem; border-radius:var(--r-sm); background:var(--surface-2); }
+  .ln-n { font-size:.78rem; font-weight:600; line-height:1.3; }
+  .ln-a { font-family:var(--mono); font-size:.78rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  .ln-q { font-family:var(--mono); font-size:.68rem; color:var(--ink-3); }
+
+  .totals { padding:.7rem .95rem; border-top:1px solid var(--line-soft);
+    display:flex; flex-direction:column; gap:.25rem; }
+  .totals .row.grand { font-size:1rem; font-weight:700; color:var(--ink);
+    padding-top:.3rem; border-top:1px dashed var(--line); }
+  .totals .row.grand span { color:var(--ink); }
+
+  .acts { padding:.75rem .95rem 1rem; display:grid; gap:.45rem; grid-template-columns:1fr 1fr;
+    border-top:1px solid var(--line-soft); }
+  .btn { font:inherit; font-size:.82rem; font-weight:650; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+    border-radius:var(--r-sm); padding:.5rem .5rem; }
+  .btn:hover:not(:disabled) { border-color:var(--brand); color:var(--brand); }
+  .btn:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
+  .btn.primary { grid-column:1/-1; background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .btn.primary:hover:not(:disabled) { background:var(--brand-ink); color:var(--brand-on); }
+
+  .bookings { padding:.5rem; display:flex; flex-direction:column; gap:.3rem; }
+  .booking { padding:.5rem .6rem; border-radius:var(--r-sm); background:var(--held-soft);
+    display:grid; grid-template-columns:auto 1fr auto; gap:.15rem .6rem; align-items:baseline; }
+  .bk-t { font-family:var(--mono); font-size:.75rem; font-weight:700; color:var(--held); }
+  .bk-n { font-size:.8rem; font-weight:600; }
+  .bk-m { font-size:.7rem; color:var(--ink-3); grid-column:2/-1; }
+
+  .foot { margin-top:1.6rem; padding-top:1rem; border-top:1px solid var(--line);
+    font-size:.8rem; color:var(--ink-3); }
+  .foot p { margin:0 0 .4rem; max-width:74ch; }
+</style>
+
+<div class="page">
+<div class="wrap">
+
+  <div class="themebar">
+    <span class="themebar-label">Accent</span>
+    <div class="swatches" id="swatches" role="group" aria-label="Accent colour"></div>
+    <div class="modes" id="modes" role="group" aria-label="Light or dark"></div>
+  </div>
+
+  <div class="banner">
+    <b>Design mockup</b>
+    <span>Not the real application — nothing is saved or sent. The tables, seat counts and layout are real, imported from the existing PixelPoint database. Money uses the same integer-halala arithmetic as the backend.</span>
+  </div>
+
+  <div class="titlebar">
+    <div class="logo">P</div>
+    <div>
+      <h1>Floor — Arid Branch</h1>
+      <div class="sub">Section 1001 · Tablet T01 · Waiter 1</div>
+    </div>
+    <div class="grow"></div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile t-free">
+      <div class="tile-l">Free</div>
+      <div class="tile-v" id="k-free">0</div>
+    </div>
+    <div class="tile t-busy">
+      <div class="tile-l">Occupied</div>
+      <div class="tile-v" id="k-busy">0</div>
+    </div>
+    <div class="tile t-held">
+      <div class="tile-l">Booked</div>
+      <div class="tile-v" id="k-held">0</div>
+    </div>
+    <div class="tile">
+      <div class="tile-l">Open total</div>
+      <div class="tile-v" id="k-total">0.00</div>
+    </div>
+  </div>
+
+  <div class="cols">
+
+    <div class="panel">
+      <div class="panel-head">
+        <h2>Floor plan</h2>
+        <div class="legend">
+          <span class="key k-free"><span class="dot"></span>Free</span>
+          <span class="key k-busy"><span class="dot"></span>Occupied</span>
+          <span class="key k-held"><span class="dot"></span>Booked</span>
+          <span class="key k-off"><span class="dot"></span>Out of service</span>
+        </div>
+      </div>
+      <div class="plan">
+        <div class="plan-grid" id="plan"></div>
+      </div>
+    </div>
+
+    <div class="panel side">
+      <div class="panel-head"><h2 id="side-title">No table selected</h2></div>
+      <div id="side-content">
+        <div class="empty">Tap a table to see its order</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="panel" style="margin-top:.9rem;">
+    <div class="panel-head"><h2>Today's bookings</h2></div>
+    <div class="bookings" id="bookings"></div>
+  </div>
+
+  <div class="foot">
+    <p><strong>Real here:</strong> 11 tables, their seat counts and shapes, taken from PixelPoint's <code>TABLESETUP</code>. The other 139 configured tables have never appeared in a single recorded sale in the history of this database, so the importer brings them in switched off rather than drawing a floor plan the restaurant does not have.</p>
+    <p><strong>Not real:</strong> positions. PixelPoint stores no floor geometry at all — its layout table was never populated — so the importer arranges tables on a grid and the restaurant drags them into place afterwards. Occupancy, orders and bookings below are illustrative.</p>
+  </div>
+
+</div>
+</div>
+
+<script>
+/* Theme picker — same tokens as the other screens, so a client palette is a
+   four-value swap across all of them. */
+(function () {
+  "use strict";
+  var PALETTES = [
+    { key:"violet", name:"Violet",
+      light:{ brand:"#6D28D9", ink:"#5B21B6", soft:"#F4EFFF", on:"#FFFFFF" },
+      dark: { brand:"#A78BFA", ink:"#C4B5FD", soft:"#241C3C", on:"#14101F" } },
+    { key:"teal", name:"Teal",
+      light:{ brand:"#0F766E", ink:"#115E59", soft:"#E6F4F2", on:"#FFFFFF" },
+      dark: { brand:"#5EEAD4", ink:"#99F6E4", soft:"#132E2C", on:"#0B1F1E" } },
+    { key:"green", name:"Green",
+      light:{ brand:"#15803D", ink:"#166534", soft:"#E9F6EC", on:"#FFFFFF" },
+      dark: { brand:"#6EE7A0", ink:"#A7F3C6", soft:"#12291C", on:"#0A1C12" } },
+    { key:"blue", name:"Blue",
+      light:{ brand:"#1D4ED8", ink:"#1E40AF", soft:"#EAF0FE", on:"#FFFFFF" },
+      dark: { brand:"#8AB4FF", ink:"#B6CEFF", soft:"#16203A", on:"#0D1526" } },
+    { key:"gold", name:"Gold",
+      light:{ brand:"#A16207", ink:"#854D0E", soft:"#FBF3E2", on:"#FFFFFF" },
+      dark: { brand:"#E3B457", ink:"#F0D08A", soft:"#2C2314", on:"#1C1608" } },
+    { key:"crimson", name:"Crimson",
+      light:{ brand:"#BE123C", ink:"#9F1239", soft:"#FDEBEF", on:"#FFFFFF" },
+      dark: { brand:"#F98BA6", ink:"#FBB6C7", soft:"#331520", on:"#210D14" } }
+  ];
+  var root = document.documentElement, current = "violet", mode = "auto";
+  function remember(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function recall(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function isDark(){
+    var a = root.getAttribute("data-theme");
+    if (a === "dark") return true;
+    if (a === "light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function pal(k){ for (var i=0;i<PALETTES.length;i++) if (PALETTES[i].key===k) return PALETTES[i]; return PALETTES[0]; }
+  function apply(){
+    var p = pal(current)[isDark() ? "dark" : "light"];
+    root.style.setProperty("--brand", p.brand);
+    root.style.setProperty("--brand-ink", p.ink);
+    root.style.setProperty("--brand-soft", p.soft);
+    root.style.setProperty("--brand-on", p.on);
+  }
+  function swatches(){
+    var h = document.getElementById("swatches"); h.textContent = "";
+    PALETTES.forEach(function(p){
+      var b = document.createElement("button");
+      b.type="button"; b.className="sw"; b.title=p.name;
+      b.style.setProperty("--c", p.light.brand);
+      b.setAttribute("aria-label", p.name);
+      b.setAttribute("aria-pressed", p.key===current ? "true":"false");
+      b.addEventListener("click", function(){ current=p.key; remember("pos.accent",current); apply(); swatches(); });
+      h.appendChild(b);
+    });
+  }
+  function modes(){
+    var h = document.getElementById("modes"); h.textContent = "";
+    [["auto","Auto"],["light","Light"],["dark","Dark"]].forEach(function(m){
+      var b = document.createElement("button");
+      b.type="button"; b.className="mode"; b.textContent=m[1];
+      b.setAttribute("aria-pressed", m[0]===mode ? "true":"false");
+      b.addEventListener("click", function(){
+        mode=m[0]; remember("pos.mode",mode);
+        if (mode==="auto") root.removeAttribute("data-theme");
+        else root.setAttribute("data-theme", mode);
+        apply(); modes();
+      });
+      h.appendChild(b);
+    });
+  }
+  var sp = recall("pos.accent"); if (sp) current = sp;
+  var sm = recall("pos.mode");
+  if (sm) { mode = sm; if (mode !== "auto") root.setAttribute("data-theme", mode); }
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  new MutationObserver(apply).observe(root, { attributes:true, attributeFilter:["data-theme"] });
+  swatches(); modes(); apply();
+})();
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  // Real tables from the migrated floor plan: table number, seats, grid
+  // position, footprint and shape. is_active is false for the 139 that have
+  // never appeared in a sale.
+  var TABLES = [
+    {no:1,  seats:2, x:0,  y:0, w:2, shape:"round", active:true},
+    {no:2,  seats:2, x:5,  y:0, w:2, shape:"round", active:true},
+    {no:3,  seats:2, x:10, y:0, w:2, shape:"round", active:true},
+    {no:4,  seats:2, x:15, y:0, w:2, shape:"round", active:true},
+    {no:5,  seats:6, x:20, y:0, w:4, shape:"rect",  active:true},
+    {no:6,  seats:2, x:25, y:0, w:2, shape:"round", active:true},
+    {no:11, seats:4, x:30, y:0, w:3, shape:"rect",  active:true},
+    {no:13, seats:2, x:35, y:0, w:2, shape:"round", active:true},
+    {no:22, seats:2, x:40, y:0, w:2, shape:"round", active:true},
+    {no:35, seats:2, x:45, y:0, w:2, shape:"round", active:true},
+    {no:60, seats:2, x:0,  y:4, w:2, shape:"round", active:true},
+    // A sample of the inactive ones, to show how they read on the plan.
+    {no:7,  seats:2, x:5,  y:4, w:2, shape:"round", active:false},
+    {no:8,  seats:6, x:10, y:4, w:4, shape:"rect",  active:false},
+    {no:9,  seats:2, x:15, y:4, w:2, shape:"round", active:false},
+    {no:12, seats:2, x:20, y:4, w:2, shape:"round", active:false}
+  ];
+
+  // Illustrative live state. Real product names and prices from the catalog.
+  var OPEN = {
+    5:  { guests:5, since:"19:12", lines:[
+            ["MOUSHAKAL SABAH", 1, 3800],
+            ["KABSA MASHAWI 1/2 KG", 1, 9900],
+            ["ORANGE MEDIUM", 3, 900] ] },
+    11: { guests:4, since:"19:40", lines:[
+            ["HUMMOS", 2, 800],
+            ["KEBAB LAHM 4 (LEBNANI)", 2, 4900],
+            ["COCA COLA MEDIUM", 4, 300] ] },
+    2:  { guests:2, since:"20:05", lines:[
+            ["SHAWARMA LAHAM LARGE", 2, 1500],
+            ["Water Small", 2, 100] ] }
+  };
+
+  var BOOKED = { 13:"21:00", 22:"21:30" };
+
+  var BOOKINGS = [
+    { at:"21:00", name:"Al Harbi",  size:2, table:13, occasion:null },
+    { at:"21:30", name:"Al Otaibi", size:2, table:22, occasion:"ANNIVERSARY" },
+    { at:"22:00", name:"Walk-in hold", size:6, table:null, occasion:null }
+  ];
+
+  var VAT = 15;
+  var CELL = 22;   // px per grid unit
+
+  function fmt(h) {
+    var s = h < 0 ? "-" : "", a = Math.abs(h);
+    return s + Math.floor(a/100) + "." + String(a%100).padStart(2,"0");
+  }
+  // Tax is the remainder, never computed separately — net + tax is always
+  // exactly what the guest pays.
+  function split(gross) {
+    var net = Math.round(gross * 100 / (100 + VAT));
+    return { net:net, vat:gross-net, gross:gross };
+  }
+  function tableTotal(no) {
+    var o = OPEN[no];
+    if (!o) return 0;
+    return o.lines.reduce(function(s,l){ return s + l[1]*l[2]; }, 0);
+  }
+
+  var selected = null;
+  var plan = document.getElementById("plan");
+
+  function statusOf(t) {
+    if (!t.active) return "off";
+    if (OPEN[t.no]) return "busy";
+    if (BOOKED[t.no]) return "held";
+    return "free";
+  }
+
+  function renderPlan() {
+    plan.textContent = "";
+    var maxX = 0, maxY = 0;
+    TABLES.forEach(function (t) {
+      var st = statusOf(t);
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "table " + st + (t.shape === "round" ? " round" : "");
+      b.style.left   = (t.x * CELL) + "px";
+      b.style.top    = (t.y * CELL) + "px";
+      b.style.width  = (t.w * CELL) + "px";
+      b.style.height = (2 * CELL) + "px";
+      b.setAttribute("aria-pressed", selected === t.no ? "true" : "false");
+      b.disabled = !t.active;
+
+      var no = document.createElement("span");
+      no.className = "t-no"; no.textContent = t.no;
+      b.appendChild(no);
+
+      var meta = document.createElement("span");
+      meta.className = "t-meta";
+      meta.textContent = st === "busy"
+        ? OPEN[t.no].guests + "/" + t.seats
+        : (st === "held" ? BOOKED[t.no] : t.seats + " seats");
+      b.appendChild(meta);
+
+      if (st === "busy") {
+        var amt = document.createElement("span");
+        amt.className = "t-amt";
+        amt.textContent = fmt(tableTotal(t.no));
+        b.appendChild(amt);
+      }
+
+      b.setAttribute("aria-label",
+        "Table " + t.no + ", " + t.seats + " seats, " +
+        (st === "off" ? "out of service" :
+         st === "busy" ? "occupied" :
+         st === "held" ? "booked at " + BOOKED[t.no] : "free"));
+
+      b.addEventListener("click", function () {
+        selected = (selected === t.no) ? null : t.no;
+        renderPlan(); renderSide();
+      });
+
+      plan.appendChild(b);
+      maxX = Math.max(maxX, (t.x + t.w) * CELL);
+      maxY = Math.max(maxY, (t.y + 2) * CELL);
+    });
+    plan.style.width  = (maxX + 8) + "px";
+    plan.style.height = (maxY + 8) + "px";
+  }
+
+  function renderTiles() {
+    var free = 0, busy = 0, held = 0, total = 0;
+    TABLES.forEach(function (t) {
+      var st = statusOf(t);
+      if (st === "free") free++;
+      else if (st === "busy") { busy++; total += tableTotal(t.no); }
+      else if (st === "held") held++;
+    });
+    document.getElementById("k-free").textContent = free;
+    document.getElementById("k-busy").textContent = busy;
+    document.getElementById("k-held").textContent = held;
+    document.getElementById("k-total").textContent = fmt(total);
+  }
+
+  function row(label, value, cls) {
+    var d = document.createElement("div");
+    d.className = "row" + (cls ? " " + cls : "");
+    var a = document.createElement("span"); a.textContent = label;
+    var b = document.createElement("b"); b.textContent = value;
+    d.appendChild(a); d.appendChild(b);
+    return d;
+  }
+
+  function renderSide() {
+    var host = document.getElementById("side-content");
+    var title = document.getElementById("side-title");
+    host.textContent = "";
+
+    if (selected === null) {
+      title.textContent = "No table selected";
+      var e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "Tap a table to see its order";
+      host.appendChild(e);
+      return;
+    }
+
+    var t = TABLES.filter(function (x) { return x.no === selected; })[0];
+    var st = statusOf(t);
+    title.textContent = "Table " + t.no + " · " + t.seats + " seats";
+
+    var body = document.createElement("div");
+    body.className = "side-body";
+
+    if (st === "free" || st === "held") {
+      body.appendChild(row("Status", st === "held"
+        ? "Booked for " + BOOKED[t.no] : "Free"));
+      body.appendChild(row("Seats", String(t.seats)));
+      host.appendChild(body);
+
+      var acts = document.createElement("div");
+      acts.className = "acts";
+      var seat = document.createElement("button");
+      seat.className = "btn primary"; seat.type = "button";
+      seat.textContent = "Seat guests";
+      var book = document.createElement("button");
+      book.className = "btn"; book.type = "button"; book.textContent = "Book";
+      var block = document.createElement("button");
+      block.className = "btn"; block.type = "button"; block.textContent = "Out of service";
+      acts.appendChild(seat); acts.appendChild(book); acts.appendChild(block);
+      host.appendChild(acts);
+      return;
+    }
+
+    var o = OPEN[t.no];
+    body.appendChild(row("Guests", o.guests + " of " + t.seats));
+    body.appendChild(row("Open since", o.since));
+
+    var ul = document.createElement("ul");
+    ul.className = "lines";
+    o.lines.forEach(function (l) {
+      var li = document.createElement("li");
+      var n = document.createElement("span"); n.className = "ln-n"; n.textContent = l[0];
+      var a = document.createElement("span"); a.className = "ln-a"; a.textContent = fmt(l[1]*l[2]);
+      var q = document.createElement("span"); q.className = "ln-q"; q.textContent = l[1] + " x " + fmt(l[2]);
+      li.appendChild(n); li.appendChild(a); li.appendChild(q);
+      ul.appendChild(li);
+    });
+    body.appendChild(ul);
+    host.appendChild(body);
+
+    var tot = split(tableTotal(t.no));
+    var totals = document.createElement("div");
+    totals.className = "totals";
+    totals.appendChild(row("Subtotal (excl. VAT)", fmt(tot.net)));
+    totals.appendChild(row("VAT 15%", fmt(tot.vat)));
+    totals.appendChild(row("Total", fmt(tot.gross), "grand"));
+    host.appendChild(totals);
+
+    var acts2 = document.createElement("div");
+    acts2.className = "acts";
+    var add = document.createElement("button");
+    add.className = "btn"; add.type = "button"; add.textContent = "Add items";
+    var move = document.createElement("button");
+    move.className = "btn"; move.type = "button"; move.textContent = "Move table";
+    var bill = document.createElement("button");
+    bill.className = "btn primary"; bill.type = "button"; bill.textContent = "Bill · " + fmt(tot.gross);
+    acts2.appendChild(add); acts2.appendChild(move); acts2.appendChild(bill);
+    host.appendChild(acts2);
+  }
+
+  function renderBookings() {
+    var host = document.getElementById("bookings");
+    host.textContent = "";
+    BOOKINGS.forEach(function (b) {
+      var d = document.createElement("div");
+      d.className = "booking";
+      var t = document.createElement("span"); t.className = "bk-t"; t.textContent = b.at;
+      var n = document.createElement("span"); n.className = "bk-n"; n.textContent = b.name;
+      var s = document.createElement("span"); s.className = "bk-t";
+      s.textContent = b.size + "p";
+      var m = document.createElement("span"); m.className = "bk-m";
+      m.textContent = (b.table ? "Table " + b.table : "No table assigned") +
+        (b.occasion ? " · " + b.occasion : "");
+      d.appendChild(t); d.appendChild(n); d.appendChild(s); d.appendChild(m);
+      host.appendChild(d);
+    });
+  }
+
+  renderPlan();
+  renderTiles();
+  renderSide();
+  renderBookings();
+})();
+</script>

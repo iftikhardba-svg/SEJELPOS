@@ -1,0 +1,32 @@
+# Credentials — never committed. run.ps1 refuses to run without the local
+# copy, and the local copy stays here.
+migration/env.local.ps1
+*.env
+
+# Extracted customer data. The migration output contains the restaurant's real
+# menu, staff list and sales-derived figures; the repository holds the tooling,
+# not the customer's data.
+migration/out/
+
+# Local databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/dev_e2e.db
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Flutter/Dart (app/ has its own .gitignore too)
+app/.dart_tool/
+app/build/
+app/.flutter-plugins*
+
+# Editors / OS
+.idea/
+.vscode/
+Thumbs.db

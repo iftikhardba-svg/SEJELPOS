@@ -1,0 +1,586 @@
+<title>POS Kitchen Display — Design Mockup</title>
+<style>
+  :root {
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --r:14px; --r-sm:10px;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono",Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+      --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+      --line:#282D3A; --line-soft:#222732;
+      --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+      --good:#3FC1AF; --good-soft:#122C2A;
+      --warn:#E09A56; --warn-soft:#2F2318;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C; --brand-on:#14101F;
+    --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+    --line:#282D3A; --line-soft:#222732;
+    --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+    --good:#3FC1AF; --good-soft:#122C2A;
+    --warn:#E09A56; --warn-soft:#2F2318;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"]{
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF; --brand-on:#FFFFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --shadow:0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+  }
+  /* KDS extension of the same token system: a red "late" colour, and a true
+     yellow for the middle age band — the shared warn token is burnt orange,
+     and the kitchen rule is explicitly green / yellow / red. */
+  :root { --bad:#B42318; --bad-soft:#FBEBE9; --hold:#A16207; --hold-soft:#FBF3E2; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bad:#F97066; --bad-soft:#33130F; --hold:#E3B457; --hold-soft:#2C2314; }
+  }
+  :root[data-theme="dark"]{ --bad:#F97066; --bad-soft:#33130F; --hold:#E3B457; --hold-soft:#2C2314; }
+  :root[data-theme="light"]{ --bad:#B42318; --bad-soft:#FBEBE9; --hold:#A16207; --hold-soft:#FBF3E2; }
+
+  * { box-sizing:border-box; }
+  .page { background:var(--ground); color:var(--ink); font-family:var(--sans);
+    font-size:.95rem; line-height:1.55;
+    padding: clamp(1rem,3vw,1.75rem) clamp(.9rem,3vw,1.75rem) 4rem; }
+  .wrap { max-width:78rem; margin:0 auto; }
+
+  .themebar { display:flex; align-items:center; gap:.55rem 1rem; flex-wrap:wrap;
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+    box-shadow:var(--shadow); padding:.6rem .85rem; margin-bottom:1.1rem; }
+  .themebar-label { font-size:.7rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .swatches { display:flex; gap:.4rem; }
+  .sw { width:1.5rem; height:1.5rem; border-radius:999px; cursor:pointer; padding:0;
+    background:var(--c); border:2px solid transparent; box-shadow:0 0 0 1px var(--line) inset; }
+  .sw[aria-pressed="true"] { border-color:var(--surface); box-shadow:0 0 0 2px var(--c); }
+  .sw:focus-visible { outline:2px solid var(--c); outline-offset:2px; }
+  .modes { display:flex; gap:.25rem; margin-left:auto; }
+  .mode { font:inherit; font-size:.76rem; font-weight:600; cursor:pointer;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+    border-radius:999px; padding:.24rem .7rem; }
+  .mode:hover { border-color:var(--brand); color:var(--brand); }
+  .mode[aria-pressed="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .mode:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+
+  .banner { background:var(--warn-soft);
+    border:1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+    border-radius:var(--r); padding:.85rem 1.1rem; margin-bottom:1.2rem;
+    display:flex; gap:.7rem; align-items:baseline; flex-wrap:wrap; }
+  .banner b { color:var(--warn); }
+  .banner span { color:var(--ink-2); font-size:.86rem; }
+
+  .titlebar { display:flex; align-items:center; gap:.75rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .logo { width:32px;height:32px;border-radius:9px;background:var(--brand);color:var(--brand-on);
+    display:grid;place-items:center;font-weight:700;flex:none; }
+  .titlebar h1 { font-size:1.15rem; font-weight:680; letter-spacing:-.02em; margin:0; }
+  .titlebar .sub { color:var(--ink-3); font-size:.82rem; }
+  .grow { flex:1 1 auto; }
+
+  .tiles { display:flex; gap:.5rem; flex-wrap:wrap; }
+  .tile { background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--r-sm); box-shadow:var(--shadow);
+    padding:.4rem .75rem; min-width:5.4rem; text-align:center; }
+  .tile .tv { font-family:var(--mono); font-weight:800; font-size:1.1rem;
+    font-variant-numeric:tabular-nums; color:var(--ink); line-height:1.25; }
+  .tile .tl { font-size:.62rem; font-weight:700; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .tile.late .tv { color:var(--bad); }
+
+  .kds { display:grid; gap:.9rem; align-items:start; grid-template-columns:1fr; }
+  @media (min-width:64rem){ .kds { grid-template-columns:1fr 17rem; } }
+  .panel { background:var(--surface); border:1px solid var(--line);
+    border-radius:var(--r); box-shadow:var(--shadow); overflow:hidden; }
+
+  .tabs { display:flex; gap:.4rem; padding:.7rem; overflow-x:auto; border-bottom:1px solid var(--line-soft); }
+  .tab { font:inherit; font-size:.83rem; font-weight:600; white-space:nowrap;
+    border:1px solid var(--line); background:var(--surface-2); color:var(--ink-2);
+    padding:.45rem .85rem; border-radius:999px; cursor:pointer;
+    display:inline-flex; align-items:center; }
+  .tab:hover { border-color:var(--brand); color:var(--brand); }
+  .tab[aria-selected="true"] { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .tab:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .cnt { font-family:var(--mono); font-size:.68rem; font-weight:700;
+    font-variant-numeric:tabular-nums; margin-left:.4rem;
+    background:var(--surface); border:1px solid var(--line); color:var(--ink-2);
+    border-radius:999px; padding:0 .4rem; }
+  .tab[aria-selected="true"] .cnt { background:color-mix(in srgb, var(--brand-on) 22%, transparent);
+    border-color:transparent; color:var(--brand-on); }
+
+  .rail { display:grid; gap:.7rem; padding:.85rem; align-items:start;
+    grid-template-columns:repeat(auto-fill, minmax(15rem,1fr)); }
+  .rail-empty { grid-column:1/-1; padding:2.2rem 1rem; text-align:center;
+    color:var(--ink-3); font-size:.85rem; }
+
+  .ticket { background:var(--surface); border:1px solid var(--line);
+    border-left:4px solid var(--line); border-radius:var(--r-sm);
+    box-shadow:var(--shadow); padding:.7rem .75rem;
+    display:flex; flex-direction:column; gap:.55rem; }
+  /* Kitchen ageing rule: green under 3:00, yellow 3:00–4:59, red from 5:00. */
+  .ticket.age-fresh { border-left-color:var(--good);
+    background:color-mix(in srgb, var(--good-soft) 45%, var(--surface)); }
+  .ticket.age-fresh .timer { color:var(--good); }
+  .ticket.age-warn { border-left-color:var(--hold);
+    background:color-mix(in srgb, var(--hold-soft) 55%, var(--surface)); }
+  .ticket.age-warn .timer { color:var(--hold); }
+  .ticket.age-bad { border-left-color:var(--bad);
+    border-color:color-mix(in srgb, var(--bad) 40%, var(--line));
+    background:color-mix(in srgb, var(--bad-soft) 65%, var(--surface)); }
+  .ticket.age-bad .timer { color:var(--bad); }
+
+  .t-head { display:flex; align-items:center; gap:.5rem; }
+  .t-no { font-family:var(--mono); font-weight:800; font-size:1.3rem;
+    line-height:1; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .timer { margin-left:auto; font-family:var(--mono); font-weight:700;
+    font-size:.95rem; color:var(--ink-2); font-variant-numeric:tabular-nums; }
+  .t-meta { display:flex; gap:.45rem; align-items:center; flex-wrap:wrap; }
+  .badge { font-size:.6rem; font-weight:800; letter-spacing:.07em;
+    text-transform:uppercase; border-radius:5px; padding:.18rem .45rem;
+    background:var(--surface-2); border:1px solid var(--line); color:var(--ink-2); }
+  .badge.dt { background:var(--brand-soft);
+    border-color:color-mix(in srgb, var(--brand) 30%, transparent); color:var(--brand-ink); }
+  .badge.agg { background:var(--warn-soft);
+    border-color:color-mix(in srgb, var(--warn) 35%, transparent); color:var(--warn); }
+  .ref { font-family:var(--mono); font-size:.68rem; color:var(--ink-3); }
+
+  .t-lines { display:flex; flex-direction:column; gap:.35rem; }
+  .tline { font:inherit; text-align:left; cursor:pointer; width:100%;
+    background:var(--surface-2); border:1px solid var(--line-soft);
+    border-radius:8px; padding:.45rem .55rem; color:var(--ink); }
+  .tline:hover { border-color:var(--brand); }
+  .tline:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .tline.done { background:var(--good-soft);
+    border-color:color-mix(in srgb, var(--good) 30%, transparent); }
+  .tline.done .q, .tline.done .nm { text-decoration:line-through; color:var(--good); }
+  .lrow { display:flex; gap:.45rem; align-items:baseline; flex-wrap:wrap; }
+  .q { font-family:var(--mono); font-weight:800; font-size:.8rem;
+    color:var(--ink-2); font-variant-numeric:tabular-nums; }
+  .nm { font-weight:620; font-size:.82rem; line-height:1.3; }
+  .chip { font-family:var(--mono); font-size:.58rem; letter-spacing:.05em;
+    text-transform:uppercase; border:1px solid var(--line); border-radius:999px;
+    padding:.02rem .4rem; color:var(--ink-3); background:var(--surface); }
+  .note { display:block; font-style:italic; color:var(--ink-3); font-size:.75rem; margin-top:.2rem; }
+
+  .bump { font:inherit; font-weight:700; font-size:.85rem; cursor:pointer;
+    width:100%; border-radius:8px; padding:.5rem;
+    background:var(--brand-soft); color:var(--brand-ink);
+    border:1px solid color-mix(in srgb, var(--brand) 35%, transparent); }
+  .bump:hover { border-color:var(--brand); }
+  .bump:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .bump.ready { background:var(--brand); border-color:var(--brand); color:var(--brand-on); }
+  .bump.ready:hover { background:var(--brand-ink); }
+
+  .lane-head { padding:.7rem .85rem; border-bottom:1px solid var(--line-soft);
+    display:flex; justify-content:space-between; align-items:baseline; gap:.5rem; }
+  .lane-head h2 { font-size:.9rem; font-weight:680; margin:0; }
+  .lane-head .sub { font-size:.7rem; color:var(--ink-3); }
+  .lane-list { display:flex; flex-direction:column; }
+  .dline { display:flex; align-items:center; gap:.55rem;
+    padding:.55rem .85rem; border-bottom:1px solid var(--line-soft); }
+  .dline:last-child { border-bottom:none; }
+  .d-no { font-family:var(--mono); font-weight:800; color:var(--good);
+    font-variant-numeric:tabular-nums; }
+  .d-type { font-size:.66rem; font-weight:700; letter-spacing:.05em;
+    text-transform:uppercase; color:var(--ink-3); }
+  .recall { font:inherit; font-size:.75rem; font-weight:650; cursor:pointer;
+    margin-left:auto; border:1px solid var(--line); background:var(--surface-2);
+    color:var(--ink-2); border-radius:999px; padding:.2rem .65rem; }
+  .recall:hover { border-color:var(--brand); color:var(--brand); }
+  .recall:focus-visible { outline:2px solid var(--brand); outline-offset:2px; }
+  .lane-empty { padding:1.4rem .85rem; text-align:center;
+    color:var(--ink-3); font-size:.8rem; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .ticket { transition:border-color .3s ease, background-color .3s ease; }
+    .timer { transition:color .3s ease; }
+    .tline { transition:background-color .15s ease, border-color .15s ease; }
+  }
+
+  .foot { margin-top:1.6rem; padding-top:1rem; border-top:1px solid var(--line);
+    font-size:.8rem; color:var(--ink-3); }
+  .foot p { margin:0 0 .4rem; max-width:74ch; }
+</style>
+
+<div class="page">
+<div class="wrap">
+
+  <div class="themebar">
+    <span class="themebar-label">Accent</span>
+    <div class="swatches" id="swatches" role="group" aria-label="Accent colour"></div>
+    <div class="modes" id="modes" role="group" aria-label="Light or dark"></div>
+  </div>
+
+  <div class="banner">
+    <b>Design mockup</b>
+    <span>Not the real application — nothing persists, nothing is signed or sent. The stations (Expo, Grill, Shawarma, DT) and every product name and its routing are real, recovered from PixelPoint's printer configuration and the PRINTLOC bitmask. The live queue is illustrative: in the old system tickets went to paper printers and KDS was barely used (485 of 228,093 lines). Kitchens usually keep Dark mode, but this screen honours whichever mode you pick above.</span>
+  </div>
+
+  <div class="titlebar">
+    <div class="logo">P</div>
+    <div>
+      <h1>Kitchen — Arid Branch</h1>
+      <div class="sub">Station display</div>
+    </div>
+    <div class="grow"></div>
+    <div class="tiles">
+      <div class="tile"><div class="tv" id="sum-open">0</div><div class="tl">Open tickets</div></div>
+      <div class="tile"><div class="tv" id="sum-avg">00:00</div><div class="tl">Avg wait</div></div>
+      <div class="tile late"><div class="tv" id="sum-late">0</div><div class="tl">Late &ge;5 min</div></div>
+    </div>
+  </div>
+
+  <div class="kds">
+    <div class="panel">
+      <div class="tabs" role="tablist" aria-label="Station" id="stationtabs"></div>
+      <div class="rail" id="rail"></div>
+    </div>
+
+    <div class="panel lane">
+      <div class="lane-head">
+        <h2>Done</h2>
+        <span class="sub">last 5 bumped</span>
+      </div>
+      <div class="lane-list" id="lane"></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <p><strong>Real here:</strong> the four stations — Expo, Grill, Shawarma and DT (drive-thru assembly) — are the restaurant's actual kitchen stations from PixelPoint's printer ports, and every product name and its station routing comes from the PRINTLOC bitmask in the migrated catalog. The old system sent these tickets to paper printers; this screen is what replaces the printers.</p>
+    <p><strong>Not real:</strong> the queue, the timers and every ticket state are illustrative and reset on reload.</p>
+  </div>
+
+</div>
+</div>
+
+<script>
+/* Theme picker — same tokens across all three mockups. */
+(function () {
+  "use strict";
+  var PALETTES = [
+    { key:"violet", light:{ brand:"#6D28D9", ink:"#5B21B6", soft:"#F4EFFF", on:"#FFFFFF" },
+      dark:{ brand:"#A78BFA", ink:"#C4B5FD", soft:"#241C3C", on:"#14101F" }, name:"Violet" },
+    { key:"teal", light:{ brand:"#0F766E", ink:"#115E59", soft:"#E6F4F2", on:"#FFFFFF" },
+      dark:{ brand:"#5EEAD4", ink:"#99F6E4", soft:"#132E2C", on:"#0B1F1E" }, name:"Teal" },
+    { key:"green", light:{ brand:"#15803D", ink:"#166534", soft:"#E9F6EC", on:"#FFFFFF" },
+      dark:{ brand:"#6EE7A0", ink:"#A7F3C6", soft:"#12291C", on:"#0A1C12" }, name:"Green" },
+    { key:"blue", light:{ brand:"#1D4ED8", ink:"#1E40AF", soft:"#EAF0FE", on:"#FFFFFF" },
+      dark:{ brand:"#8AB4FF", ink:"#B6CEFF", soft:"#16203A", on:"#0D1526" }, name:"Blue" },
+    { key:"gold", light:{ brand:"#A16207", ink:"#854D0E", soft:"#FBF3E2", on:"#FFFFFF" },
+      dark:{ brand:"#E3B457", ink:"#F0D08A", soft:"#2C2314", on:"#1C1608" }, name:"Gold" },
+    { key:"crimson", light:{ brand:"#BE123C", ink:"#9F1239", soft:"#FDEBEF", on:"#FFFFFF" },
+      dark:{ brand:"#F98BA6", ink:"#FBB6C7", soft:"#331520", on:"#210D14" }, name:"Crimson" }
+  ];
+  var root = document.documentElement, current = "violet", mode = "auto";
+  function remember(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+  function recall(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+  function isDark(){
+    var a = root.getAttribute("data-theme");
+    if (a==="dark") return true;
+    if (a==="light") return false;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  function pal(k){ for (var i=0;i<PALETTES.length;i++) if (PALETTES[i].key===k) return PALETTES[i]; return PALETTES[0]; }
+  function apply(){
+    var p = pal(current)[isDark()?"dark":"light"];
+    root.style.setProperty("--brand",p.brand);
+    root.style.setProperty("--brand-ink",p.ink);
+    root.style.setProperty("--brand-soft",p.soft);
+    root.style.setProperty("--brand-on",p.on);
+  }
+  function swatches(){
+    var h = document.getElementById("swatches"); h.textContent="";
+    PALETTES.forEach(function(p){
+      var b=document.createElement("button");
+      b.type="button"; b.className="sw"; b.title=p.name;
+      b.style.setProperty("--c",p.light.brand);
+      b.setAttribute("aria-label",p.name);
+      b.setAttribute("aria-pressed",p.key===current?"true":"false");
+      b.addEventListener("click",function(){ current=p.key; remember("pos.accent",current); apply(); swatches(); });
+      h.appendChild(b);
+    });
+  }
+  function modesUI(){
+    var h=document.getElementById("modes"); h.textContent="";
+    [["auto","Auto"],["light","Light"],["dark","Dark"]].forEach(function(m){
+      var b=document.createElement("button");
+      b.type="button"; b.className="mode"; b.textContent=m[1];
+      b.setAttribute("aria-pressed",m[0]===mode?"true":"false");
+      b.addEventListener("click",function(){
+        mode=m[0]; remember("pos.mode",mode);
+        if (mode==="auto") root.removeAttribute("data-theme");
+        else root.setAttribute("data-theme",mode);
+        apply(); modesUI();
+      });
+      h.appendChild(b);
+    });
+  }
+  var sp=recall("pos.accent"); if (sp) current=sp;
+  var sm=recall("pos.mode");
+  if (sm){ mode=sm; if (mode!=="auto") root.setAttribute("data-theme",mode); }
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change",apply);
+  new MutationObserver(apply).observe(root,{attributes:true,attributeFilter:["data-theme"]});
+  swatches(); modesUI(); apply();
+})();
+</script>
+
+<script>
+(function () {
+  "use strict";
+
+  // Real stations from PixelPoint's printer ports. Products route to them
+  // via the PRINTLOC bitmask; lines with no station are shown under Expo
+  // so someone owns the hand-off (drinks, retail items).
+  var STATIONS = ["All","Expo","Grill","Shawarma","DT"];
+
+  // Real products and real routing; quantities, notes and ages illustrative.
+  // base = seconds elapsed when the page loaded.
+  var TICKETS = [
+    { no:118, type:"DRIVE THRU", agg:false, ref:null, table:null, base:400, lines:[
+      { qty:2, name:"CHEESE BURGER LAHM MEAL", st:["DT"] },
+      { qty:1, name:"FRIES BIG", st:["Grill"] },
+      { qty:1, name:"COCA COLA MEDIUM", st:[] } ]},
+    { no:119, type:"KEETA", agg:true, ref:"KEETA-58211", table:null, base:312, lines:[
+      { qty:1, name:"KM SHWARMA CHIKEN", st:["Shawarma"] },
+      { qty:1, name:"Hummos Lahm", st:["Grill","DT"] } ]},
+    { no:120, type:"DRIVE THRU", agg:false, ref:null, table:null, base:245, lines:[
+      { qty:1, name:"K Spicy Broasted", st:["Expo"] },
+      { qty:1, name:"FRIES SML", st:["Grill"] } ]},
+    { no:121, type:"DINE-IN", agg:false, ref:null, table:"Table 5", base:200, lines:[
+      { qty:1, name:"KABSA MASHAWI 1/2 KG", st:["Grill","DT"], note:"no nuts" },
+      { qty:1, name:"SHISH TAWOUK SMALL", st:["Grill"] } ]},
+    { no:122, type:"TAKEAWAY", agg:false, ref:null, table:null, base:164, lines:[
+      { qty:2, name:"Shawa Sandw Ckn", st:["Shawarma"] },
+      { qty:1, name:"EXTRA CHEESE", st:["Shawarma"] } ]},
+    { no:123, type:"HUNGERSTATION", agg:true, ref:null, table:null, base:118, lines:[
+      { qty:1, name:"Broasted Spicy", st:["Expo"] },
+      { qty:1, name:"MOUSHAKAL KIBBEH", st:["Expo","DT"] } ]},
+    { no:124, type:"DRIVE THRU", agg:false, ref:null, table:null, base:31, lines:[
+      { qty:1, name:"BURGER ALRAHHAL MEAL", st:["DT"] },
+      { qty:1, name:"ORANGE MEDIUM", st:[] } ]}
+  ];
+  TICKETS.forEach(function(t){
+    t.bumped=false;
+    t.lines.forEach(function(l){ l.done=false; });
+  });
+
+  var t0 = Date.now();
+  var station = "All";
+  var bumpedList = [];   // newest first
+  var cardRefs = [];     // {t, card, timer} for the cards on screen
+
+  function mmss(s){
+    s = Math.max(0, Math.floor(s));
+    return String(Math.floor(s/60)).padStart(2,"0") + ":" + String(s%60).padStart(2,"0");
+  }
+  function ageOf(t){ return t.base + Math.floor((Date.now()-t0)/1000); }
+  // Green under 3:00, yellow 3:00–4:59, red from 5:00 — the kitchen's rule.
+  function ageClass(s){
+    if (s >= 300) return "age-bad";
+    if (s >= 180) return "age-warn";
+    return "age-fresh";
+  }
+  function linesFor(t, name){
+    if (name === "All") return t.lines;
+    return t.lines.filter(function(l){
+      return l.st.indexOf(name) >= 0 || (name === "Expo" && l.st.length === 0);
+    });
+  }
+  function openTickets(){ return TICKETS.filter(function(t){ return !t.bumped; }); }
+  function allDone(t){ return t.lines.every(function(l){ return l.done; }); }
+  function badgeText(t){ return t.table ? t.type + " " + t.table : t.type; }
+
+  function renderTabs(){
+    var host = document.getElementById("stationtabs");
+    host.textContent = "";
+    STATIONS.forEach(function(name){
+      var count = name === "All"
+        ? openTickets().length
+        : openTickets().filter(function(t){ return linesFor(t,name).length > 0; }).length;
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "tab";
+      b.setAttribute("role","tab");
+      b.setAttribute("aria-selected", name === station ? "true" : "false");
+      var nm = document.createElement("span"); nm.textContent = name;
+      var c = document.createElement("span"); c.className = "cnt"; c.textContent = String(count);
+      b.appendChild(nm); b.appendChild(c);
+      b.addEventListener("click", function(){
+        station = name; renderTabs(); renderRail();
+      });
+      host.appendChild(b);
+    });
+  }
+
+  function renderRail(){
+    var host = document.getElementById("rail");
+    host.textContent = "";
+    cardRefs = [];
+    var shown = 0;
+
+    TICKETS.forEach(function(t){
+      if (t.bumped) return;
+      var lines = linesFor(t, station);
+      if (!lines.length) return;
+      shown++;
+
+      var age = ageOf(t);
+      var card = document.createElement("div");
+      card.className = "ticket " + ageClass(age);
+
+      var head = document.createElement("div"); head.className = "t-head";
+      var no = document.createElement("span"); no.className = "t-no";
+      no.textContent = "#" + t.no;
+      var timer = document.createElement("span"); timer.className = "timer";
+      timer.textContent = mmss(age);
+      head.appendChild(no); head.appendChild(timer);
+
+      var meta = document.createElement("div"); meta.className = "t-meta";
+      var badge = document.createElement("span");
+      badge.className = "badge" + (t.agg ? " agg" : "") + (t.type === "DRIVE THRU" ? " dt" : "");
+      badge.textContent = badgeText(t);
+      meta.appendChild(badge);
+      if (t.ref){
+        var ref = document.createElement("span"); ref.className = "ref";
+        ref.textContent = t.ref;
+        meta.appendChild(ref);
+      }
+
+      var bumpBtn; // assigned below; used by line handlers at click time
+
+      var lwrap = document.createElement("div"); lwrap.className = "t-lines";
+      lines.forEach(function(l){
+        var lb = document.createElement("button");
+        lb.type = "button";
+        lb.className = "tline" + (l.done ? " done" : "");
+        lb.setAttribute("aria-pressed", l.done ? "true" : "false");
+        var row = document.createElement("span"); row.className = "lrow";
+        var q = document.createElement("span"); q.className = "q";
+        q.textContent = l.qty + "×";
+        var nm = document.createElement("span"); nm.className = "nm";
+        nm.textContent = l.name;
+        row.appendChild(q); row.appendChild(nm);
+        if (station === "All"){
+          if (l.st.length){
+            l.st.forEach(function(s){
+              var ch = document.createElement("span"); ch.className = "chip";
+              ch.textContent = s;
+              row.appendChild(ch);
+            });
+          } else {
+            var ch0 = document.createElement("span"); ch0.className = "chip";
+            ch0.textContent = "—";
+            ch0.title = "No station — handled at Expo";
+            row.appendChild(ch0);
+          }
+        }
+        lb.appendChild(row);
+        if (l.note){
+          var nt = document.createElement("span"); nt.className = "note";
+          nt.textContent = l.note;
+          lb.appendChild(nt);
+        }
+        lb.addEventListener("click", function(){
+          l.done = !l.done;
+          lb.classList.toggle("done", l.done);
+          lb.setAttribute("aria-pressed", l.done ? "true" : "false");
+          bumpBtn.classList.toggle("ready", allDone(t));
+        });
+        lwrap.appendChild(lb);
+      });
+
+      bumpBtn = document.createElement("button");
+      bumpBtn.type = "button";
+      bumpBtn.className = "bump" + (allDone(t) ? " ready" : "");
+      bumpBtn.textContent = "Bump";
+      bumpBtn.setAttribute("aria-label", "Bump ticket " + t.no);
+      bumpBtn.addEventListener("click", function(){ bump(t); });
+
+      card.appendChild(head);
+      card.appendChild(meta);
+      card.appendChild(lwrap);
+      card.appendChild(bumpBtn);
+      cardRefs.push({ t:t, card:card, timer:timer });
+      host.appendChild(card);
+    });
+
+    if (!shown){
+      var e = document.createElement("div"); e.className = "rail-empty";
+      e.textContent = "No open tickets for this station.";
+      host.appendChild(e);
+    }
+  }
+
+  function renderLane(){
+    var host = document.getElementById("lane");
+    host.textContent = "";
+    if (!bumpedList.length){
+      var e = document.createElement("div"); e.className = "lane-empty";
+      e.textContent = "Bumped tickets land here.";
+      host.appendChild(e);
+      return;
+    }
+    bumpedList.slice(0,5).forEach(function(t){
+      var row = document.createElement("div"); row.className = "dline";
+      var no = document.createElement("span"); no.className = "d-no";
+      no.textContent = "#" + t.no;
+      var ty = document.createElement("span"); ty.className = "d-type";
+      ty.textContent = badgeText(t);
+      var rc = document.createElement("button");
+      rc.type = "button"; rc.className = "recall"; rc.textContent = "Recall";
+      rc.setAttribute("aria-label", "Recall ticket " + t.no);
+      rc.addEventListener("click", function(){ recall(t); });
+      row.appendChild(no); row.appendChild(ty); row.appendChild(rc);
+      host.appendChild(row);
+    });
+  }
+
+  function renderSummary(){
+    var open = openTickets();
+    document.getElementById("sum-open").textContent = String(open.length);
+    if (open.length){
+      var total = open.reduce(function(s,t){ return s + ageOf(t); }, 0);
+      document.getElementById("sum-avg").textContent = mmss(Math.round(total/open.length));
+    } else {
+      document.getElementById("sum-avg").textContent = "—";
+    }
+    var late = open.filter(function(t){ return ageOf(t) >= 300; }).length;
+    document.getElementById("sum-late").textContent = String(late);
+  }
+
+  function bump(t){
+    t.bumped = true;
+    bumpedList.unshift(t);
+    renderRail(); renderLane(); renderTabs(); renderSummary();
+  }
+  function recall(t){
+    t.bumped = false;
+    bumpedList = bumpedList.filter(function(x){ return x !== t; });
+    renderRail(); renderLane(); renderTabs(); renderSummary();
+  }
+
+  function tick(){
+    cardRefs.forEach(function(r){
+      if (r.t.bumped) return;
+      var age = ageOf(r.t);
+      r.timer.textContent = mmss(age);
+      var cls = "ticket " + ageClass(age);
+      if (r.card.className !== cls) r.card.className = cls;
+    });
+    renderSummary();
+  }
+  window.setInterval(tick, 1000);
+
+  renderTabs(); renderRail(); renderLane(); renderSummary();
+})();
+</script>

@@ -1,0 +1,701 @@
+<title>POS Product — Build Status</title>
+<style>
+  :root {
+    /* Brand accent — single token. Swap these three for a client palette. */
+    --brand:      #6D28D9;
+    --brand-ink:  #5B21B6;
+    --brand-soft: #F4EFFF;
+
+    --ground:     #F6F7FA;
+    --surface:    #FFFFFF;
+    --surface-2:  #FBFBFD;
+    --line:       #E6E8EE;
+    --line-soft:  #EFF1F5;
+
+    --ink:        #14161C;
+    --ink-2:      #565E70;
+    --ink-3:      #8A93A6;
+
+    --good:       #0E9384;
+    --good-soft:  #E6F5F3;
+    --warn:       #B54708;
+    --warn-soft:  #FDF0E6;
+    --bad:        #B42318;
+    --bad-soft:   #FDECEA;
+
+    --r:    14px;
+    --r-sm: 9px;
+    --shadow: 0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+
+    --t--1: clamp(.78rem, .76rem + .08vw, .83rem);
+    --t-0:  clamp(.94rem, .91rem + .14vw, 1rem);
+    --t-1:  clamp(1.1rem, 1.05rem + .25vw, 1.22rem);
+    --t-2:  clamp(1.4rem, 1.25rem + .6vw, 1.75rem);
+    --t-3:  clamp(1.9rem, 1.55rem + 1.5vw, 2.9rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C;
+      --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+      --line:#282D3A; --line-soft:#222732;
+      --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+      --good:#3FC1AF; --good-soft:#122C2A;
+      --warn:#E09A56; --warn-soft:#2F2318;
+      --bad:#EF8079;  --bad-soft:#301C1B;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --brand:#A78BFA; --brand-ink:#C4B5FD; --brand-soft:#241C3C;
+    --ground:#0E1016; --surface:#161922; --surface-2:#1B1F29;
+    --line:#282D3A; --line-soft:#222732;
+    --ink:#E9EBF0; --ink-2:#A0A8BA; --ink-3:#727B90;
+    --good:#3FC1AF; --good-soft:#122C2A;
+    --warn:#E09A56; --warn-soft:#2F2318;
+    --bad:#EF8079;  --bad-soft:#301C1B;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 2px 10px rgba(0,0,0,.25);
+  }
+  :root[data-theme="light"] {
+    --brand:#6D28D9; --brand-ink:#5B21B6; --brand-soft:#F4EFFF;
+    --ground:#F6F7FA; --surface:#FFFFFF; --surface-2:#FBFBFD;
+    --line:#E6E8EE; --line-soft:#EFF1F5;
+    --ink:#14161C; --ink-2:#565E70; --ink-3:#8A93A6;
+    --good:#0E9384; --good-soft:#E6F5F3;
+    --warn:#B54708; --warn-soft:#FDF0E6;
+    --bad:#B42318;  --bad-soft:#FDECEA;
+    --shadow: 0 1px 2px rgba(20,22,28,.04), 0 2px 8px rgba(20,22,28,.05);
+  }
+
+  * { box-sizing: border-box; }
+
+  .app {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: var(--t-0);
+    line-height: 1.6;
+    padding: 0 clamp(1rem, 4vw, 2rem) 5rem;
+  }
+  .wrap { max-width: 68rem; margin: 0 auto; }
+
+  /* ---------- top bar ---------- */
+  .bar {
+    display: flex; align-items: center; gap: .8rem;
+    padding: 1.1rem 0 1.6rem;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: clamp(1.8rem, 4vw, 2.6rem);
+    flex-wrap: wrap;
+  }
+  .logo {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: var(--brand); color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 1rem; letter-spacing: -.02em;
+    flex: none;
+  }
+  .bar-name { font-weight: 650; letter-spacing: -.01em; }
+  .bar-sub  { color: var(--ink-3); font-size: var(--t--1); }
+  .bar-spacer { flex: 1 1 auto; }
+  .bar-date {
+    font-size: var(--t--1); color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---------- hero ---------- */
+  .hero { display: flex; flex-direction: column; gap: .85rem; margin-bottom: 2rem; }
+  h1 {
+    font-size: var(--t-3); font-weight: 700; letter-spacing: -.035em;
+    line-height: 1.05; margin: 0; text-wrap: balance;
+  }
+  .hero p {
+    margin: 0; font-size: var(--t-1); color: var(--ink-2);
+    max-width: 52ch; text-wrap: pretty;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .3rem; }
+  .chip {
+    font-size: var(--t--1); color: var(--ink-2);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 999px; padding: .25rem .7rem;
+  }
+
+  /* ---------- KPI tiles ---------- */
+  .kpis {
+    display: grid; gap: .8rem; margin-bottom: 2.6rem;
+    grid-template-columns: repeat(2, 1fr);
+  }
+  @media (min-width: 42rem) { .kpis { grid-template-columns: repeat(4, 1fr); } }
+  .kpi {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r); padding: .95rem 1.05rem 1.05rem;
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: .25rem;
+  }
+  .kpi-label {
+    font-size: var(--t--1); color: var(--ink-3);
+    text-transform: uppercase; letter-spacing: .05em; font-weight: 600;
+  }
+  .kpi-val {
+    font-size: clamp(1.5rem, 1.2rem + 1.1vw, 2rem); font-weight: 700;
+    letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.1;
+  }
+  .kpi-note { font-size: var(--t--1); color: var(--ink-2); }
+  .kpi.is-gap .kpi-val { color: var(--bad); }
+
+  /* ---------- sections ---------- */
+  section { margin-bottom: clamp(2.4rem, 5vw, 3.4rem); }
+  .sec-head { margin-bottom: 1.1rem; display: flex; flex-direction: column; gap: .3rem; }
+  h2 {
+    font-size: var(--t-2); font-weight: 680; letter-spacing: -.025em;
+    margin: 0; text-wrap: balance;
+  }
+  .sec-head p { margin: 0; color: var(--ink-2); max-width: 66ch; text-wrap: pretty; }
+  h3 { font-size: var(--t-0); font-weight: 650; letter-spacing: -.01em; margin: 0; }
+  p { margin: 0; text-wrap: pretty; }
+
+  /* ---------- notice ---------- */
+  .notice {
+    background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 26%, transparent);
+    border-radius: var(--r); padding: 1.1rem 1.25rem;
+    display: flex; flex-direction: column; gap: .4rem; margin-bottom: 2.6rem;
+  }
+  .notice h3 { color: var(--warn); font-size: var(--t-1); }
+  .notice p { color: var(--ink-2); max-width: 68ch; }
+
+  /* ---------- cards ---------- */
+  .grid { display: grid; gap: .9rem; grid-template-columns: 1fr; }
+  @media (min-width: 44rem) { .grid.two { grid-template-columns: 1fr 1fr; } }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r); padding: 1.15rem 1.25rem 1.25rem;
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: .6rem;
+  }
+  .card-head { display: flex; align-items: center; justify-content: space-between; gap: .7rem; }
+  .card p { font-size: var(--t--1); color: var(--ink-2); }
+
+  .pill {
+    font-size: .68rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; padding: .22rem .55rem;
+    border-radius: 999px; white-space: nowrap; flex: none;
+  }
+  .p-good { color: var(--good); background: var(--good-soft); }
+  .p-warn { color: var(--warn); background: var(--warn-soft); }
+  .p-bad  { color: var(--bad);  background: var(--bad-soft); }
+
+  .stats {
+    display: flex; flex-wrap: wrap; gap: .3rem 1.2rem;
+    padding-top: .65rem; border-top: 1px solid var(--line-soft);
+    font-size: var(--t--1); color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .stats b { color: var(--ink); font-weight: 650; }
+
+  /* ---------- table ---------- */
+  .tablecard {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden;
+  }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: var(--t--1); }
+  th, td { text-align: left; padding: .68rem .95rem; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+  thead th {
+    background: var(--surface-2); color: var(--ink-3);
+    font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; font-weight: 650; }
+
+  /* ---------- code ---------- */
+  .codecard {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden;
+    margin-bottom: .9rem;
+  }
+  .codecard-head {
+    padding: .6rem .95rem; border-bottom: 1px solid var(--line-soft);
+    background: var(--surface-2);
+    font-size: .7rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  pre {
+    margin: 0; padding: .95rem; overflow-x: auto;
+    font-family: var(--mono); font-size: var(--t--1);
+    line-height: 1.6; color: var(--ink-2);
+  }
+  .ok { color: var(--good); font-weight: 700; }
+  .er { color: var(--bad);  font-weight: 700; }
+  .wn { color: var(--warn); font-weight: 700; }
+  .dim{ color: var(--ink-3); }
+
+  /* ---------- findings ---------- */
+  .find {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--bad);
+    border-radius: var(--r-sm); padding: 1rem 1.15rem;
+    display: flex; flex-direction: column; gap: .3rem;
+  }
+  .find h3 { color: var(--ink); }
+  .find p { font-size: var(--t--1); color: var(--ink-2); max-width: 74ch; }
+
+  /* ---------- gaps ---------- */
+  .gap {
+    display: grid; grid-template-columns: 6.5rem 1fr; gap: .3rem 1rem;
+    padding: .95rem 0; border-bottom: 1px solid var(--line);
+  }
+  .gap:last-child { border-bottom: 0; }
+  @media (max-width: 34rem) { .gap { grid-template-columns: 1fr; } }
+  .gap p { font-size: var(--t--1); color: var(--ink-2); max-width: 74ch; }
+  .gap strong { color: var(--ink); font-weight: 650; }
+
+  footer {
+    margin-top: 2.5rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
+    font-size: var(--t--1); color: var(--ink-3);
+  }
+
+  /* ---------- theme picker ---------- */
+  .themebar {
+    display: flex; align-items: center; gap: .55rem 1rem; flex-wrap: wrap;
+    padding: .55rem 0 0;
+  }
+  .themebar-label {
+    font-size: .7rem; font-weight: 700; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--ink-3);
+  }
+  .swatches { display: flex; gap: .4rem; }
+  .sw {
+    width: 1.45rem; height: 1.45rem; border-radius: 999px; cursor: pointer; padding: 0;
+    background: var(--c); border: 2px solid transparent;
+    box-shadow: 0 0 0 1px var(--line) inset;
+  }
+  .sw[aria-pressed="true"] { border-color: var(--surface); box-shadow: 0 0 0 2px var(--c); }
+  .sw:focus-visible { outline: 2px solid var(--c); outline-offset: 2px; }
+  .modes { display: flex; gap: .25rem; }
+  .mode {
+    font: inherit; font-size: .74rem; font-weight: 600; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink-2);
+    border-radius: 999px; padding: .22rem .68rem;
+  }
+  .mode:hover { border-color: var(--brand); color: var(--brand); }
+  .mode[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: #fff; }
+  :root[data-theme="dark"] .mode[aria-pressed="true"] { color: #14101F; }
+  @media (prefers-color-scheme: dark) {
+    .mode[aria-pressed="true"] { color: #14101F; }
+  }
+  :root[data-theme="light"] .mode[aria-pressed="true"] { color: #fff; }
+  .mode:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+</style>
+
+<div class="app">
+<div class="wrap">
+
+  <div class="bar">
+    <div class="logo">P</div>
+    <div>
+      <div class="bar-name">POS Platform</div>
+      <div class="bar-sub">Build status report</div>
+    </div>
+    <div class="bar-spacer"></div>
+    <div class="themebar">
+      <span class="themebar-label">Accent</span>
+      <div class="swatches" id="swatches" role="group" aria-label="Accent colour"></div>
+      <div class="modes" id="modes" role="group" aria-label="Light or dark"></div>
+    </div>
+    <div class="bar-date">4 August 2026</div>
+  </div>
+
+  <div class="hero">
+    <h1>The foundation is built.<br>The till is not.</h1>
+    <p>Data migration, the multi-tenant sync backend and the ZATCA compliance library all work and are tested. The app a waiter will actually touch has not been started.</p>
+    <div class="chips">
+      <span class="chip">Android tablets</span>
+      <span class="chip">Saudi Arabia · VAT 15%</span>
+      <span class="chip">Offline-first</span>
+      <span class="chip">Multi-tenant SaaS</span>
+      <span class="chip">Replacing PixelPoint</span>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="kpi-label">Tests passing</div>
+      <div class="kpi-val">115</div>
+      <div class="kpi-note">across three suites</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Menu migrated</div>
+      <div class="kpi-val">560</div>
+      <div class="kpi-note">products, prices exact</div>
+    </div>
+    <div class="kpi">
+      <div class="kpi-label">Bugs caught</div>
+      <div class="kpi-val">3</div>
+      <div class="kpi-note">before any customer</div>
+    </div>
+    <div class="kpi is-gap">
+      <div class="kpi-label">Till app</div>
+      <div class="kpi-val">0%</div>
+      <div class="kpi-note">not started</div>
+    </div>
+  </div>
+
+  <div class="notice">
+    <h3>There is no POS screen yet</h3>
+    <p>Nothing here can be opened and used by a waiter. What exists is everything underneath that — the parts that are expensive to get wrong and hard to change later. The tablet app has not been started, and the ZATCA library has never been checked against ZATCA's own systems.</p>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <h2>The four pieces</h2>
+      <p>Three built, one not begun.</p>
+    </div>
+    <div class="grid two">
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Catalog migration</h3>
+          <span class="pill p-good">Working</span>
+        </div>
+        <p>Pulls the menu, staff and payment methods out of the existing PixelPoint database and reshapes them for the new system. Safe to re-run — running it twice changes nothing.</p>
+        <div class="stats">
+          <span><b>560</b> products</span>
+          <span><b>64</b> screens</span>
+          <span><b>540</b> buttons</span>
+          <span><b>13</b> staff</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Sync backend</h3>
+          <span class="pill p-good">Working</span>
+        </div>
+        <p>The API tablets talk to: pull the catalog, push finished sales. One customer's data is walled off from another's by the database itself, not by remembering to filter every query.</p>
+        <div class="stats">
+          <span><b>32</b> tests</span>
+          <span><b>14</b> tables</span>
+          <span><b>4</b> tenancy levels</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>ZATCA library</h3>
+          <span class="pill p-warn">Unvalidated</span>
+        </div>
+        <p>Builds the tax invoice, QR code and cryptographic stamp a receipt legally needs — offline, on the device. Internally consistent, but never checked against ZATCA.</p>
+        <div class="stats">
+          <span><b>62</b> tests pass</span>
+          <span><b>0</b> validated by ZATCA</span>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h3>Till application</h3>
+          <span class="pill p-bad">Not started</span>
+        </div>
+        <p>The Flutter app on the tablet — menu grid, order taking, payment, receipt printing, and the hub role that shares open tables between waiters. None of it exists.</p>
+        <div class="stats">
+          <span class="dim">Flutter SDK not yet installed</span>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>What came out of PixelPoint</h2>
+      <p>Every price was checked against the source, to the halala. The migration refuses to finish if a single one disagrees.</p>
+    </div>
+    <div class="tablecard">
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>What</th><th class="n">Count</th><th>Note</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Products imported</td><td class="n">560</td><td>All prices match source exactly</td></tr>
+            <tr><td>Sellable items</td><td class="n">526</td><td>Active, not a modifier</td></tr>
+            <tr><td>Modifiers &amp; comment buttons</td><td class="n">16</td><td>"Extra sauce", "No onions"</td></tr>
+            <tr><td>Menu screens</td><td class="n">64</td><td>Categories staff tap through</td></tr>
+            <tr><td>Menu buttons</td><td class="n">540</td><td>Product placements on screens</td></tr>
+            <tr><td>Payment methods</td><td class="n">5</td><td>Cash, Visa, MasterCard, MADA, Aggregator</td></tr>
+            <tr><td>Staff records</td><td class="n">13</td><td>All must set a new PIN</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <p style="margin-top:.9rem; color:var(--ink-2); font-size:var(--t--1);">
+      Prices range from <strong>1.00</strong> to <strong>199.00</strong> SAR, VAT-inclusive. The 15% rate was not assumed — it was recovered from 200 real historical sales and cross-checked.
+    </p>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Evidence it runs</h2>
+      <p>Actual output, not illustration.</p>
+    </div>
+
+    <div class="codecard">
+      <div class="codecard-head">Test suites</div>
+<pre>backend  · PostgreSQL    <span class="ok">32 passed</span>    app + tenant isolation + schema drift
+backend  · SQLite        <span class="ok">21 passed</span>    <span class="dim">11 skipped (need PostgreSQL)</span>
+zatca    · library       <span class="ok">62 passed</span>    QR, hashing, signing, invoice XML
+migration· end-to-end    <span class="ok">passed</span>       <span class="wn">1 item flagged for review</span></pre>
+    </div>
+
+    <div class="codecard">
+      <div class="codecard-head">A tablet pulling its catalog</div>
+<pre><span class="dim">GET /v1/catalog?since=0</span>    <span class="ok">200</span>
+{
+  "version": 1,
+  "has_more": false,
+  "products": [
+    { "prodnum": 2008, "descript": "MOUSHAKAL SABAH",
+      "price_a": 3800, "tax_applies": true, ... },
+    { "prodnum": 2013, "descript": "HUMMOS",
+      "price_a": 800,  "tax_applies": true, ... }
+  ],
+  "pay_methods": [ { "methodnum": 1010, "descript": "MADA", ... } ]
+}
+
+<span class="dim">GET /v1/catalog?since=1</span>    <span class="ok">200</span>    <span class="dim">nothing new — tablet is current</span>
+{ "version": 1, "products": [], "pay_methods": [], ... }
+
+<span class="dim">GET /v1/catalog</span>           <span class="er">401</span>    { "detail": "missing bearer token" }
+<span class="dim">GET /v1/catalog</span>           <span class="er">402</span>    { "detail": "no active licence" }</pre>
+    </div>
+
+    <div class="codecard">
+      <div class="codecard-head">A tax invoice built and stamped offline</div>
+<pre>net           46.95 SAR
+vat            7.05 SAR
+gross         54.00 SAR
+
+QR payload decoded:
+  seller_name      <span class="dim">مطعم فاطمة</span>
+  vat_number       310000000000003
+  timestamp        2026-08-04T07:11:34Z
+  total_with_vat   54.00
+  vat_total        7.05
+  invoice_hash     VNdKEvqZ/IPxzOYxFYo/+5FTinTOP2C39F1OOUt1Q4E=
+  signature        MEUCICcuJLzqXLGGTMQTFly9gzZty4saHGnnAchddWGYWG6v...
+  public_key       <span class="dim">&lt;88 bytes&gt;</span></pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Bugs the testing caught</h2>
+      <p>Three defects that would have reached customers. Each surfaced only because the code was run against a real PostgreSQL rather than the convenient one.</p>
+    </div>
+    <div class="grid">
+
+      <div class="find">
+        <h3>Tenant isolation was switched off</h3>
+        <p>The command used to scope each request to one customer silently does not accept parameters in PostgreSQL. Every tenant-scoped request would have failed in production, and the isolation it was meant to enforce was never actually active. In a product sold to many restaurants, that is one customer seeing another's sales.</p>
+      </div>
+
+      <div class="find">
+        <h3>The database and the code disagreed</h3>
+        <p>Columns existed in one definition and not the other — a field stored as structured data in the database but plain text in the code, a staff PIN the database required that the migration deliberately leaves empty. A test now compares the two on every run, so they cannot drift apart quietly again.</p>
+      </div>
+
+      <div class="find">
+        <h3>A password shipped in the source</h3>
+        <p>Deploying without setting a signing key fell back to a default written into the code itself. Anyone with a copy could have issued themselves a valid tablet login for any customer. The server now refuses to start rather than run in that state.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Decisions worth knowing</h2>
+      <p>Four choices that shape everything built on top.</p>
+    </div>
+    <div class="grid two">
+      <article class="card">
+        <h3>Money is never a decimal</h3>
+        <p>All amounts are whole halalas. Fractional arithmetic drifts, and a bill off by one halala is a wrong tax invoice. VAT is derived by subtraction so net, tax and total always reconcile — tested against every price from 0.01 to 50.00 SAR.</p>
+      </article>
+      <article class="card">
+        <h3>Every tablet stamps its own receipts</h3>
+        <p>Each device registers with ZATCA in its own right. If one tablet dies, the rest keep selling and keep printing legal receipts. Nothing in the billing path needs the network, or the other tablets.</p>
+      </article>
+      <article class="card">
+        <h3>Sales can be added, never removed</h3>
+        <p>The application has no permission to delete a sale — the database refuses it outright. Corrections are credit notes. A tax record that can be deleted is not a tax record.</p>
+      </article>
+      <article class="card">
+        <h3>Old staff PINs were left behind</h3>
+        <p>PixelPoint contained one login code: the vendor default, 12345. Carrying that forward would ship an open door to every customer. All 13 staff start with no PIN and must set one.</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>What is not done</h2>
+      <p>The honest list, worst first.</p>
+    </div>
+    <div class="tablecard" style="padding: .3rem 1.25rem;">
+      <div class="gap">
+        <span class="pill p-bad" style="align-self:start;">Blocking</span>
+        <p><strong>ZATCA has never seen these invoices.</strong> The library is provably self-consistent, which is not the same as compliant. Canonicalisation, hash encoding and rounding all need checking against ZATCA's own validator, and the signature block inside the invoice is still an empty placeholder. Sandbox credentials from the ZATCA portal are needed to go further.</p>
+      </div>
+      <div class="gap">
+        <span class="pill p-bad" style="align-self:start;">Not started</span>
+        <p><strong>The till application.</strong> Menu grid, order taking, payment, receipt printing, offline queue, and the hub role that lets waiters share tables. The largest remaining body of work, and the only part a customer will ever see.</p>
+      </div>
+      <div class="gap">
+        <span class="pill p-bad" style="align-self:start;">Not started</span>
+        <p><strong>Sending sales onward.</strong> Finished sales are stored and marked pending; nothing yet forwards them to the ERP or reports them to ZATCA. The ERP side is waiting on answers about its integration contract.</p>
+      </div>
+      <div class="gap">
+        <span class="pill p-warn" style="align-self:start;">Risk</span>
+        <p><strong>The schema is defined twice.</strong> Once in code, once in SQL, both maintained by hand. They have already drifted apart once. A test now catches it, but proper migrations would remove the problem rather than police it.</p>
+      </div>
+      <div class="gap">
+        <span class="pill p-warn" style="align-self:start;">Review</span>
+        <p><strong>68 items priced at zero.</strong> Active products that are neither modifiers nor open-price. Most look like dead menu entries carried forward for years, but someone who knows the menu should confirm before go-live.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Generated from the working tree. Migration, backend and ZATCA suites all run at time of writing.
+  </footer>
+
+</div>
+</div>
+
+<script>
+/* Theme picker. Accent is a single token set, so a client palette is a
+   four-value swap. Each palette carries a dark variant — a hue that reads well
+   on white usually needs lifting to stay legible on a dark ground. */
+(function () {
+  "use strict";
+
+  var PALETTES = [
+    { key:"violet", name:"Violet",
+      light:{ brand:"#6D28D9", ink:"#5B21B6", soft:"#F4EFFF" },
+      dark: { brand:"#A78BFA", ink:"#C4B5FD", soft:"#241C3C" } },
+    { key:"teal", name:"Teal",
+      light:{ brand:"#0F766E", ink:"#115E59", soft:"#E6F4F2" },
+      dark: { brand:"#5EEAD4", ink:"#99F6E4", soft:"#132E2C" } },
+    { key:"green", name:"Green",
+      light:{ brand:"#15803D", ink:"#166534", soft:"#E9F6EC" },
+      dark: { brand:"#6EE7A0", ink:"#A7F3C6", soft:"#12291C" } },
+    { key:"blue", name:"Blue",
+      light:{ brand:"#1D4ED8", ink:"#1E40AF", soft:"#EAF0FE" },
+      dark: { brand:"#8AB4FF", ink:"#B6CEFF", soft:"#16203A" } },
+    { key:"gold", name:"Gold",
+      light:{ brand:"#A16207", ink:"#854D0E", soft:"#FBF3E2" },
+      dark: { brand:"#E3B457", ink:"#F0D08A", soft:"#2C2314" } },
+    { key:"crimson", name:"Crimson",
+      light:{ brand:"#BE123C", ink:"#9F1239", soft:"#FDEBEF" },
+      dark: { brand:"#F98BA6", ink:"#FBB6C7", soft:"#331520" } }
+  ];
+
+  var STORE_PAL = "pos.accent";
+  var STORE_MODE = "pos.mode";
+  var root = document.documentElement;
+  var current = "violet";
+  var mode = "auto";
+
+  function remember(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* sandboxed */ } }
+  function recall(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  function isDark() {
+    var attr = root.getAttribute("data-theme");
+    if (attr === "dark") { return true; }
+    if (attr === "light") { return false; }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  function palette(key) {
+    for (var i = 0; i < PALETTES.length; i++) {
+      if (PALETTES[i].key === key) { return PALETTES[i]; }
+    }
+    return PALETTES[0];
+  }
+
+  function apply() {
+    var p = palette(current)[isDark() ? "dark" : "light"];
+    root.style.setProperty("--brand", p.brand);
+    root.style.setProperty("--brand-ink", p.ink);
+    root.style.setProperty("--brand-soft", p.soft);
+  }
+
+  function buildSwatches() {
+    var host = document.getElementById("swatches");
+    if (!host) { return; }
+    host.textContent = "";
+    PALETTES.forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "sw";
+      b.style.setProperty("--c", p.light.brand);
+      b.title = p.name;
+      b.setAttribute("aria-label", p.name);
+      b.setAttribute("aria-pressed", p.key === current ? "true" : "false");
+      b.addEventListener("click", function () {
+        current = p.key;
+        remember(STORE_PAL, current);
+        apply();
+        buildSwatches();
+      });
+      host.appendChild(b);
+    });
+  }
+
+  function buildModes() {
+    var host = document.getElementById("modes");
+    if (!host) { return; }
+    host.textContent = "";
+    [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].forEach(function (m) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "mode";
+      b.textContent = m[1];
+      b.setAttribute("aria-pressed", m[0] === mode ? "true" : "false");
+      b.addEventListener("click", function () {
+        mode = m[0];
+        remember(STORE_MODE, mode);
+        if (mode === "auto") { root.removeAttribute("data-theme"); }
+        else { root.setAttribute("data-theme", mode); }
+        apply();
+        buildModes();
+      });
+      host.appendChild(b);
+    });
+  }
+
+  var savedPal = recall(STORE_PAL);
+  if (savedPal) { current = savedPal; }
+  var savedMode = recall(STORE_MODE);
+  if (savedMode) {
+    mode = savedMode;
+    if (mode !== "auto") { root.setAttribute("data-theme", mode); }
+  }
+
+  // Follow the OS in auto, and follow the host's own theme toggle whenever it
+  // stamps data-theme on the root — otherwise the accent keeps a variant tuned
+  // for the ground it is no longer sitting on.
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", apply);
+  new MutationObserver(apply).observe(root, {
+    attributes: true, attributeFilter: ["data-theme"]
+  });
+
+  buildSwatches();
+  buildModes();
+  apply();
+})();
+</script>

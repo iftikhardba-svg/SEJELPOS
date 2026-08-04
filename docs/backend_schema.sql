@@ -1,0 +1,33 @@
+-- ============================================================
+-- SUPERSEDED — do not edit, and do not use this to build a database.
+-- ============================================================
+--
+-- This file used to be the hand-written schema. It was maintained alongside
+-- backend/app/models.py, the two drifted apart, and the mismatch only surfaced
+-- when PostgreSQL rejected an insert that SQLite had been accepting for weeks:
+--
+--   * company.address was JSONB here and TEXT in the models
+--   * staff.pin_hash was NOT NULL here after migration made it nullable
+--   * is_modifier, buttons_across, pos_x and several others existed only in
+--     the models and never reached this file
+--   * ingest_log and catalog_version_seq existed only here and nothing used them
+--
+-- The schema now has one definition:
+--
+--   backend/app/models.py          tables, columns, indexes, constraints
+--   backend/migrations/versions/   generated from the models by Alembic
+--
+-- Whatever the ORM cannot express — Row Level Security policies, CHECK
+-- constraints, the non-superuser pos_app role — lives in the hand-written
+-- migration `5650ee789d9a_row_level_security_checks_and_app_role.py`.
+--
+-- To build a database:
+--
+--   alembic upgrade head
+--
+-- To change the schema: edit models.py, then
+--
+--   alembic revision --autogenerate -m "what changed"
+--
+-- `tests/test_migrations.py` fails the build if the two ever disagree again.
+-- ============================================================
