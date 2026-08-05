@@ -20,6 +20,10 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+# Dev seed only. A real deployment creates its first owner through onboarding,
+# never from a password committed to a repository.
+OFFICE_PASSWORD = "dev-office-password"
+
 
 async def main(database_url: str) -> None:
     os.environ["POS_DATABASE_URL"] = database_url
@@ -118,10 +122,25 @@ async def main(database_url: str) -> None:
                 position=pos, server_version=1,
             ))
 
+        # A back-office account, so the office is reachable straight after a
+        # seed. Dev-only credentials, printed below on purpose.
+        from app.office_auth import hash_password
+
+        s.add(m.BackOfficeUser(
+            tenant_id=tenant.id,
+            email="owner@dev.local",
+            name="Dev Owner",
+            role="owner",
+            password_hash=hash_password(OFFICE_PASSWORD),
+        ))
+
         await s.commit()
         print(json.dumps({
             "tenant_id": str(tenant.id),
             "branch_id": str(branch.id),
+            "office_url": "/office",
+            "office_email": "owner@dev.local",
+            "office_password": OFFICE_PASSWORD,
         }))
 
 

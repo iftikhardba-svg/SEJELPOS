@@ -1,0 +1,547 @@
+"""The back office.
+
+What a restaurant actually needs before it can run this POS: see what sold,
+change a price, add a till. Until now none of that existed - prices came in
+through the PixelPoint migration and could only be changed with SQL, and
+enrolment codes could only be minted with a curl command holding the
+installation-wide admin token.
+
+Two rules run through every endpoint here:
+
+* **The tenant comes from the session token**, never from the request. Every
+  query filters on it explicitly even where RLS would also catch it.
+* **A catalog edit bumps `server_version`.** That counter is the only thing
+  telling tablets there is something new to pull; an edit that does not bump it
+  is an edit no till will ever see.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import secrets
+import uuid
+
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import func, select
+
+from ..config import settings
+from ..db import SessionLocal, tenant_session
+from ..models import (
+    BackOfficeUser,
+    Branch,
+    Company,
+    Device,
+    EnrolmentCode,
+    MenuScreen,
+    Product,
+    Sale,
+    SalesType,
+)
+from ..office_auth import (
+    OfficeContext,
+    OfficeDep,
+    issue_office_token,
+    verify_password,
+)
+from ..schemas import (
+    OfficeDashboard,
+    OfficeDeviceOut,
+    OfficeEnrolmentOut,
+    OfficeLoginIn,
+    OfficeLoginOut,
+    OfficeProductOut,
+    OfficeProductUpdate,
+    OfficeSaleOut,
+)
+
+router = APIRouter(prefix="/office", tags=["back office"])
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _aware(value: dt.datetime | None) -> dt.datetime | None:
+    """SQLite hands back naive datetimes; treat them as the UTC they were."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=dt.timezone.utc) if value.tzinfo is None else value
+
+
+async def _next_catalog_version(session, tenant_id: uuid.UUID) -> int:
+    """One counter above everything the tenant's catalog currently holds.
+
+    Taken across all the catalog tables a device pulls, because they share the
+    device's single `since` watermark - versioning them independently would let
+    a product edit hide behind a higher menu version.
+    """
+    highest = 0
+    for model in (Product, MenuScreen, SalesType):
+        value = (
+            await session.execute(
+                select(func.max(model.server_version)).where(
+                    model.tenant_id == tenant_id
+                )
+            )
+        ).scalar()
+        highest = max(highest, value or 0)
+    return highest + 1
+
+
+# --------------------------------------------------------------------------
+# Session
+# --------------------------------------------------------------------------
+
+# A valid-shaped hash of a password nobody holds, used only to keep the failure
+# path as slow as the success path.
+_DUMMY_HASH = (
+    "scrypt$32768$8$1$"
+    "AAAAAAAAAAAAAAAAAAAAAA==$"
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+)
+
+
+@router.post("/login", response_model=OfficeLoginOut)
+async def login(body: OfficeLoginIn) -> OfficeLoginOut:
+    """Unauthenticated by design - this is how a session is obtained.
+
+    A plain `SessionLocal`, not a `tenant_session`: there is no tenant yet,
+    which is also why `back_office_user` carries no RLS policy. Email is
+    globally unique, so this lookup can only ever match one account.
+
+    The failure message never distinguishes an unknown address from a wrong
+    password: telling an attacker which addresses exist is a free gift.
+    """
+    async with SessionLocal() as session:
+        user = (
+            await session.execute(
+                select(BackOfficeUser).where(
+                    func.lower(BackOfficeUser.email) == body.email.strip().lower()
+                )
+            )
+        ).scalar_one_or_none()
+
+        # Verify even when there is no such user, so a missing account and a
+        # wrong password take the same time. Otherwise the response time
+        # enumerates the user table.
+        stored = user.password_hash if user else _DUMMY_HASH
+        ok = verify_password(body.password, stored)
+
+        if user is None or not ok or not user.is_active:
+            raise HTTPException(
+                status.HTTP_401_UNAUTHORIZED, "wrong email or password"
+            )
+
+        user.last_login_at = _now()
+        token = issue_office_token(user.id, user.tenant_id)
+        name, role, email, tenant_id = (
+            user.name, user.role, user.email, user.tenant_id,
+        )
+        await session.commit()
+
+        company_name = (
+            await session.execute(
+                select(Company.name).where(Company.tenant_id == tenant_id)
+            )
+        ).scalars().first()
+
+    return OfficeLoginOut(
+        token=token,
+        name=name,
+        email=email,
+        role=role,
+        company_name=company_name or "",
+    )
+
+
+@router.get("/me", response_model=OfficeLoginOut)
+async def me(ctx: OfficeContext = OfficeDep) -> OfficeLoginOut:
+    async with tenant_session(ctx.tenant_id) as session:
+        company = (
+            await session.execute(
+                select(Company.name).where(Company.tenant_id == ctx.tenant_id)
+            )
+        ).scalars().first()
+    return OfficeLoginOut(
+        token="",  # already held by the caller; never re-issued on a read
+        name=ctx.name,
+        email=ctx.email,
+        role=ctx.role,
+        company_name=company or "",
+    )
+
+
+# --------------------------------------------------------------------------
+# Dashboard
+# --------------------------------------------------------------------------
+
+@router.get("/dashboard", response_model=OfficeDashboard)
+async def dashboard(
+    business_date: dt.date | None = None,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeDashboard:
+    """Today at a glance, and the two numbers nobody wants to discover late:
+    sales that never got a ZATCA stamp, and devices that have gone quiet."""
+    day = business_date or _now().date()
+
+    async with tenant_session(ctx.tenant_id) as session:
+        scope = [Sale.tenant_id == ctx.tenant_id, Sale.business_date == day]
+
+        totals = (
+            await session.execute(
+                select(
+                    func.count(Sale.sale_uuid),
+                    func.coalesce(func.sum(Sale.final_total), 0),
+                    func.coalesce(func.sum(Sale.tax_total), 0),
+                ).where(*scope)
+            )
+        ).one()
+
+        by_type_rows = (
+            await session.execute(
+                select(
+                    Sale.sale_type,
+                    func.count(Sale.sale_uuid),
+                    func.coalesce(func.sum(Sale.final_total), 0),
+                )
+                .where(*scope)
+                .group_by(Sale.sale_type)
+                .order_by(func.sum(Sale.final_total).desc())
+            )
+        ).all()
+
+        type_names = dict(
+            (
+                await session.execute(
+                    select(SalesType.sale_type_no, SalesType.descript).where(
+                        SalesType.tenant_id == ctx.tenant_id
+                    )
+                )
+            ).all()
+        )
+
+        unsigned = (
+            await session.execute(
+                select(func.count(Sale.sale_uuid)).where(
+                    *scope, Sale.zatca_qr.is_(None)
+                )
+            )
+        ).scalar() or 0
+
+        unreported = (
+            await session.execute(
+                select(func.count(Sale.sale_uuid)).where(
+                    Sale.tenant_id == ctx.tenant_id,
+                    Sale.zatca_status == "pending",
+                )
+            )
+        ).scalar() or 0
+
+        devices = (
+            await session.execute(
+                select(func.count(Device.id)).where(
+                    Device.tenant_id == ctx.tenant_id, Device.is_active.is_(True)
+                )
+            )
+        ).scalar() or 0
+
+        # A till that has not spoken in a day is either off or broken, and
+        # either way its sales are not here.
+        silent_before = _now() - dt.timedelta(hours=24)
+        silent = (
+            await session.execute(
+                select(func.count(Device.id)).where(
+                    Device.tenant_id == ctx.tenant_id,
+                    Device.is_active.is_(True),
+                    (Device.last_seen_at.is_(None))
+                    | (Device.last_seen_at < silent_before),
+                )
+            )
+        ).scalar() or 0
+
+    count, gross, vat = totals
+    return OfficeDashboard(
+        business_date=day,
+        sale_count=count,
+        gross_total=int(gross),
+        vat_total=int(vat),
+        net_total=int(gross) - int(vat),
+        unsigned_sales=int(unsigned),
+        unreported_sales=int(unreported),
+        active_devices=int(devices),
+        silent_devices=int(silent),
+        by_sale_type=[
+            {
+                "sale_type": no,
+                "name": type_names.get(no, f"Type {no}"),
+                "count": c,
+                "gross": int(g),
+            }
+            for no, c, g in by_type_rows
+        ],
+    )
+
+
+# --------------------------------------------------------------------------
+# Products and prices
+# --------------------------------------------------------------------------
+
+def _product_out(p: Product) -> OfficeProductOut:
+    return OfficeProductOut(
+        id=p.id,
+        prodnum=p.prodnum,
+        descript=p.descript,
+        descript_ar=p.descript_ar,
+        price_a=p.price_a,
+        price_b=p.price_b,
+        price_j=p.price_j,
+        tax_applies=p.tax_applies,
+        is_active=p.is_active,
+        is_modifier=p.is_modifier,
+        print_loc=p.print_loc,
+        server_version=p.server_version,
+    )
+
+
+@router.get("/products", response_model=list[OfficeProductOut])
+async def list_products(
+    search: str = "",
+    only_zero_price: bool = False,
+    limit: int = Query(default=200, le=1000),
+    ctx: OfficeContext = OfficeDep,
+) -> list[OfficeProductOut]:
+    """`only_zero_price` exists for a real backlog item: the migration left 68
+    active, non-modifier products priced at zero. They need a human decision
+    before go-live, and this is how that person finds them."""
+    async with tenant_session(ctx.tenant_id) as session:
+        stmt = select(Product).where(
+            Product.tenant_id == ctx.tenant_id,
+            Product.is_deleted.is_(False),
+        )
+        if search.strip():
+            stmt = stmt.where(Product.descript.ilike(f"%{search.strip()}%"))
+        if only_zero_price:
+            stmt = stmt.where(
+                Product.price_a == 0,
+                Product.is_modifier.is_(False),
+                Product.is_active.is_(True),
+            )
+        stmt = stmt.order_by(Product.descript).limit(limit)
+        rows = list((await session.execute(stmt)).scalars().all())
+
+    return [_product_out(p) for p in rows]
+
+
+@router.patch("/products/{product_id}", response_model=OfficeProductOut)
+async def update_product(
+    product_id: uuid.UUID,
+    body: OfficeProductUpdate,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeProductOut:
+    """Change a price or availability.
+
+    Refuses to leave an aggregator-priced product without a tier B price. The
+    till will not silently fall back to tier A - it refuses the sale - so the
+    real cost of a missing tier B is a cashier who cannot ring a Keeta order at
+    the counter. Better to block it here, where someone can fix it.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        product = (
+            await session.execute(
+                select(Product).where(
+                    Product.id == product_id,
+                    Product.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if product is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such product")
+
+        fields = body.model_dump(exclude_unset=True)
+        if not fields:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "nothing to change")
+
+        for key, value in fields.items():
+            setattr(product, key, value)
+
+        aggregator_exists = (
+            await session.execute(
+                select(func.count(SalesType.id)).where(
+                    SalesType.tenant_id == ctx.tenant_id,
+                    SalesType.is_aggregator.is_(True),
+                    SalesType.price_tier == "b",
+                )
+            )
+        ).scalar() or 0
+        if (
+            aggregator_exists
+            and product.is_active
+            and not product.is_modifier
+            and product.price_b is None
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"{product.descript} needs a tier B price: this tenant sells "
+                "through an aggregator, and a till refuses the sale rather "
+                "than charging the walk-in price and giving away the "
+                "commission",
+            )
+
+        # Without this the edit is invisible to every till already in the field.
+        product.server_version = await _next_catalog_version(session, ctx.tenant_id)
+        await session.flush()
+        return _product_out(product)
+
+
+# --------------------------------------------------------------------------
+# Devices
+# --------------------------------------------------------------------------
+
+@router.get("/devices", response_model=list[OfficeDeviceOut])
+async def list_devices(ctx: OfficeContext = OfficeDep) -> list[OfficeDeviceOut]:
+    async with tenant_session(ctx.tenant_id) as session:
+        rows = (
+            await session.execute(
+                select(Device, Branch.name)
+                .join(Branch, Branch.id == Device.branch_id)
+                .where(Device.tenant_id == ctx.tenant_id)
+                .order_by(Device.receipt_prefix)
+            )
+        ).all()
+
+    return [
+        OfficeDeviceOut(
+            id=d.id,
+            label=d.label,
+            branch_name=branch_name,
+            role=d.role,
+            receipt_prefix=d.receipt_prefix,
+            platform=d.platform,
+            app_version=d.app_version,
+            csid_status=d.csid_status,
+            last_seen_at=_aware(d.last_seen_at),
+            last_icv=d.last_icv,
+            is_active=d.is_active,
+        )
+        for d, branch_name in rows
+    ]
+
+
+@router.post(
+    "/devices/enrolments",
+    response_model=OfficeEnrolmentOut,
+    status_code=201,
+)
+async def create_enrolment(
+    branch_id: uuid.UUID,
+    label: str,
+    receipt_prefix: str,
+    role: str = "pos",
+    kds_station_no: int | None = None,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeEnrolmentOut:
+    """Mint a one-time code for a new till.
+
+    This is the tenant-scoped replacement for `POST /admin/enrolments`, which
+    needs the installation-wide admin token. A restaurant manager adding a
+    till should not be holding a secret that reaches every other customer.
+    """
+    if role not in ("pos", "kds", "cds"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown device role")
+
+    async with tenant_session(ctx.tenant_id) as session:
+        branch = (
+            await session.execute(
+                select(Branch).where(
+                    Branch.id == branch_id, Branch.tenant_id == ctx.tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+        if branch is None:
+            # Scoped lookup, so another tenant's branch id reads as absent
+            # rather than forbidden - it should not confirm the id exists.
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such branch")
+
+        code = EnrolmentCode(
+            tenant_id=ctx.tenant_id,
+            branch_id=branch.id,
+            code=secrets.token_urlsafe(32),
+            label=label,
+            receipt_prefix=receipt_prefix,
+            role=role,
+            kds_station_no=kds_station_no,
+            expires_at=_now() + dt.timedelta(hours=settings.enrolment_code_hours),
+        )
+        session.add(code)
+        await session.flush()
+
+        return OfficeEnrolmentOut(
+            code=code.code,
+            branch_name=branch.name,
+            label=label,
+            role=role,
+            expires_at=_aware(code.expires_at),
+        )
+
+
+@router.get("/branches")
+async def list_branches(ctx: OfficeContext = OfficeDep) -> list[dict]:
+    async with tenant_session(ctx.tenant_id) as session:
+        rows = (
+            await session.execute(
+                select(Branch)
+                .where(Branch.tenant_id == ctx.tenant_id)
+                .order_by(Branch.name)
+            )
+        ).scalars().all()
+    return [{"id": str(b.id), "name": b.name, "code": b.code} for b in rows]
+
+
+# --------------------------------------------------------------------------
+# Sales
+# --------------------------------------------------------------------------
+
+@router.get("/sales", response_model=list[OfficeSaleOut])
+async def list_sales(
+    business_date: dt.date | None = None,
+    unsigned_only: bool = False,
+    limit: int = Query(default=100, le=500),
+    ctx: OfficeContext = OfficeDep,
+) -> list[OfficeSaleOut]:
+    async with tenant_session(ctx.tenant_id) as session:
+        stmt = select(Sale).where(Sale.tenant_id == ctx.tenant_id)
+        if business_date is not None:
+            stmt = stmt.where(Sale.business_date == business_date)
+        if unsigned_only:
+            stmt = stmt.where(Sale.zatca_qr.is_(None))
+        stmt = stmt.order_by(Sale.closed_at.desc()).limit(limit)
+        rows = list((await session.execute(stmt)).scalars().all())
+
+        type_names = dict(
+            (
+                await session.execute(
+                    select(SalesType.sale_type_no, SalesType.descript).where(
+                        SalesType.tenant_id == ctx.tenant_id
+                    )
+                )
+            ).all()
+        )
+
+    return [
+        OfficeSaleOut(
+            receipt_no=s.receipt_no,
+            closed_at=_aware(s.closed_at),
+            business_date=s.business_date,
+            sale_type_name=type_names.get(s.sale_type, f"Type {s.sale_type}"),
+            order_no=s.order_no,
+            external_ref=s.external_ref,
+            net_total=s.net_total,
+            tax_total=s.tax_total,
+            final_total=s.final_total,
+            is_signed=s.zatca_qr is not None,
+            zatca_icv=s.zatca_icv,
+            zatca_status=s.zatca_status,
+            zatca_error=s.zatca_error,
+        )
+        for s in rows
+    ]

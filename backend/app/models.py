@@ -151,6 +151,47 @@ class Device(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
 
 
+class BackOfficeUser(Base):
+    """A person who signs into the back office.
+
+    Deliberately NOT the shared `POS_ADMIN_TOKEN`. That token is one secret for
+    the whole installation — handing it to a restaurant manager would give them
+    every tenant's data. A back-office session is scoped to one tenant by the
+    same mechanism device tokens use, so the isolation story is the same
+    everywhere.
+
+    Separate from `Employee` on purpose: an employee is a cashier who exists in
+    the catalog and rings sales on a tablet with a numeric PIN. These are people
+    with a password and a browser, and the two sets barely overlap.
+    """
+
+    __tablename__ = "back_office_user"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    # Globally unique, NOT unique-per-tenant. Sign-in happens before any tenant
+    # is known — there is nothing to scope the lookup by — so a duplicate
+    # address across two tenants would make the login query ambiguous and the
+    # account unreachable. The cost is that one person cannot hold accounts in
+    # two tenants under the same address; they need a second address, which is
+    # the rarer problem.
+    email: Mapped[str] = mapped_column(String(320), unique=True)
+    name: Mapped[str] = mapped_column(Text)
+    # scrypt, salted per user. Never a bare hash: these are chosen passwords.
+    password_hash: Mapped[str] = mapped_column(Text)
+    # 'owner' may manage users and every branch; 'manager' works the day to day.
+    role: Mapped[str] = mapped_column(
+        String(16), default="manager", server_default=sa_text("'manager'")
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    last_login_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, server_default=func.now()
+    )
+
+
 class Licence(Base):
     __tablename__ = "licence"
 

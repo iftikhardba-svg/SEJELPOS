@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>POS Back Office</title>
+<style>
+/* Same token system as the published mockups: one violet accent, neutral
+   greys, and a dark mode that follows the OS. Kept deliberately small — this
+   page ships inside the backend and has no build step. */
+:root {
+  --accent: #6d28d9;
+  --accent-soft: #ede9fe;
+  --bg: #f7f7f8;
+  --surface: #ffffff;
+  --border: #e4e4e7;
+  --text: #18181b;
+  --muted: #71717a;
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --ok: #16a34a;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #a78bfa;
+    --accent-soft: #2e1065;
+    --bg: #0b0b0e;
+    --surface: #17171b;
+    --border: #2a2a31;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --danger: #f87171;
+    --danger-soft: #2a1215;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+button { font: inherit; cursor: pointer; }
+input, select { font: inherit; color: inherit; }
+.hidden { display: none !important; }
+
+/* ---- login ---- */
+#login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  width: 100%;
+  max-width: 380px;
+}
+.card h1 { margin: 0 0 4px; font-size: 20px; }
+.card p.sub { margin: 0 0 20px; color: var(--muted); font-size: 13px; }
+label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+input[type=text], input[type=email], input[type=password], input[type=number], input[type=search], select {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+.btn {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-weight: 600;
+}
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.ghost {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
+}
+.btn.small { padding: 6px 10px; font-size: 13px; }
+.err {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+/* ---- shell ---- */
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+header .brand { font-weight: 700; }
+header .who { margin-left: auto; color: var(--muted); font-size: 13px; }
+nav { display: flex; gap: 4px; padding: 12px 20px 0; flex-wrap: wrap; }
+nav button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 8px 14px;
+  color: var(--muted);
+  font-weight: 600;
+}
+nav button.on { background: var(--accent-soft); color: var(--accent); }
+main { padding: 20px; max-width: 1180px; }
+
+/* ---- widgets ---- */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.tile .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.tile .v { font-size: 26px; font-weight: 700; margin-top: 4px; }
+.tile.warn { border-color: var(--danger); }
+.tile.warn .v { color: var(--danger); }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-top: 18px;
+  overflow: hidden;
+}
+.panel > h2 {
+  margin: 0;
+  padding: 13px 16px;
+  font-size: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.panel .body { padding: 16px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 9px 16px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.pill.ok { background: var(--accent-soft); color: var(--accent); }
+.pill.bad { background: var(--danger-soft); color: var(--danger); }
+.toolbar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.toolbar input[type=search] { max-width: 260px; }
+.muted { color: var(--muted); }
+.note { color: var(--muted); font-size: 13px; padding: 16px; }
+input.price { width: 100px; text-align: right; font-variant-numeric: tabular-nums; }
+.code {
+  font-family: ui-monospace, Consolas, monospace;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 10px 12px;
+  border-radius: 8px;
+  word-break: break-all;
+  font-size: 13px;
+  margin-top: 10px;
+}
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.row > div { flex: 1 1 150px; }
+#toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: var(--text); color: var(--bg);
+  padding: 10px 16px; border-radius: 8px; font-size: 14px;
+  opacity: 0; pointer-events: none; transition: opacity .18s;
+}
+#toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<section id="login">
+  <form class="card" id="loginForm">
+    <h1>POS Back Office</h1>
+    <p class="sub">Sign in with the account your provider set up.</p>
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <div style="margin-top:18px"><button class="btn" style="width:100%" id="loginBtn">Sign in</button></div>
+    <div id="loginErr" class="err hidden"></div>
+  </form>
+</section>
+
+<div id="app" class="hidden">
+  <header>
+    <span class="brand">POS Back Office</span>
+    <span id="company" class="muted"></span>
+    <span class="who"><span id="who"></span> · <a href="#" id="logout">Sign out</a></span>
+  </header>
+  <nav>
+    <button data-tab="dashboard" class="on">Dashboard</button>
+    <button data-tab="products">Products &amp; prices</button>
+    <button data-tab="devices">Devices</button>
+    <button data-tab="sales">Sales</button>
+  </nav>
+  <main>
+    <section id="tab-dashboard"></section>
+    <section id="tab-products" class="hidden"></section>
+    <section id="tab-devices" class="hidden"></section>
+    <section id="tab-sales" class="hidden"></section>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+
+// Session lives in sessionStorage, not localStorage: a shared back-office
+// machine in a restaurant should not keep someone signed in after the tab
+// closes.
+const KEY = 'pos.office.token';
+let token = sessionStorage.getItem(KEY) || '';
+let branches = [];
+
+const $ = (s, r = document) => r.querySelector(s);
+const el = (t, props = {}, kids = []) => {
+  const n = Object.assign(document.createElement(t), props);
+  for (const k of [].concat(kids)) n.append(k);
+  return n;
+};
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 2600);
+}
+
+// Halalas are the unit everywhere in this product. The conversion to a decimal
+// happens here and only here, so no arithmetic upstream ever sees a float.
+const money = h => (h == null ? '—' : (h / 100).toFixed(2));
+const parseMoney = s => {
+  const v = Number(String(s).trim());
+  return Number.isFinite(v) && v >= 0 ? Math.round(v * 100) : null;
+};
+const when = iso => {
+  if (!iso) return 'never';
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+};
+
+async function api(path, opts = {}) {
+  const res = await fetch('/v1/office' + path, {
+    ...opts,
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: 'Bearer ' + token } : {}),
+      ...(opts.headers || {}),
+    },
+  });
+  if (res.status === 401) { signOut(); throw new Error('Session expired — sign in again'); }
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && (body.detail || body.message)) || ('Request failed (' + res.status + ')'));
+  return body;
+}
+
+// ---------------------------------------------------------------- session
+
+$('#loginForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const btn = $('#loginBtn'), err = $('#loginErr');
+  btn.disabled = true;
+  err.classList.add('hidden');
+  try {
+    const out = await api('/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: $('#email').value, password: $('#password').value }),
+    });
+    token = out.token;
+    sessionStorage.setItem(KEY, token);
+    await start(out);
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function signOut() {
+  token = '';
+  sessionStorage.removeItem(KEY);
+  $('#app').classList.add('hidden');
+  $('#login').classList.remove('hidden');
+}
+$('#logout').addEventListener('click', e => { e.preventDefault(); signOut(); });
+
+async function start(me) {
+  $('#login').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  $('#who').textContent = me.name + ' (' + me.role + ')';
+  $('#company').textContent = me.company_name;
+  try { branches = await api('/branches'); } catch { branches = []; }
+  show('dashboard');
+}
+
+document.querySelectorAll('nav button').forEach(b =>
+  b.addEventListener('click', () => show(b.dataset.tab)));
+
+function show(tab) {
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  ['dashboard', 'products', 'devices', 'sales'].forEach(t =>
+    $('#tab-' + t).classList.toggle('hidden', t !== tab));
+  ({ dashboard: renderDashboard, products: renderProducts, devices: renderDevices, sales: renderSales })[tab]();
+}
+
+function into(id, node) {
+  const host = $('#tab-' + id);
+  host.replaceChildren(node);
+}
+function panel(title, child) {
+  const p = el('section', { className: 'panel' }, [el('h2', { textContent: title })]);
+  p.append(child);
+  return p;
+}
+function loading(id) { into(id, el('p', { className: 'note', textContent: 'Loading…' })); }
+function failed(id, ex) { into(id, el('p', { className: 'err', textContent: ex.message })); }
+
+// -------------------------------------------------------------- dashboard
+
+async function renderDashboard() {
+  loading('dashboard');
+  try {
+    const d = await api('/dashboard');
+    const wrap = el('div');
+
+    const tiles = el('div', { className: 'tiles' });
+    const tile = (k, v, warn) => {
+      const t = el('div', { className: 'tile' + (warn ? ' warn' : '') });
+      t.append(el('div', { className: 'k', textContent: k }));
+      t.append(el('div', { className: 'v', textContent: v }));
+      return t;
+    };
+    tiles.append(
+      tile('Sales today', d.sale_count),
+      tile('Gross (SAR)', money(d.gross_total)),
+      tile('VAT (SAR)', money(d.vat_total)),
+      tile('Net (SAR)', money(d.net_total)),
+      // These two are the point of the dashboard. An unsigned sale is not a
+      // queue that drains — it is an invoice that was never legally issued.
+      tile('Unsigned sales', d.unsigned_sales, d.unsigned_sales > 0),
+      tile('Silent devices', d.silent_devices, d.silent_devices > 0),
+    );
+    wrap.append(tiles);
+
+    if (d.unsigned_sales > 0) {
+      wrap.append(el('div', { className: 'err', style: 'margin-top:16px',
+        textContent: d.unsigned_sales + ' sale(s) today closed without a ZATCA stamp. ' +
+          'Those receipts are not tax invoices and the server refused them. Check the ' +
+          'device is provisioned for signing, then see the Sales tab.' }));
+    }
+
+    const table = el('table');
+    table.append(el('thead', {}, el('tr', {}, [
+      el('th', { textContent: 'Sale type' }),
+      el('th', { className: 'num', textContent: 'Count' }),
+      el('th', { className: 'num', textContent: 'Gross (SAR)' }),
+    ])));
+    const tb = el('tbody');
+    if (!d.by_sale_type.length) {
+      tb.append(el('tr', {}, el('td', { colSpan: 3, className: 'muted', textContent: 'No sales on ' + d.business_date })));
+    }
+    for (const r of d.by_sale_type) {
+      tb.append(el('tr', {}, [
+        el('td', { textContent: r.name }),
+        el('td', { className: 'num', textContent: r.count }),
+        el('td', { className: 'num', textContent: money(r.gross) }),
+      ]));
+    }
+    table.append(tb);
+    wrap.append(panel('Trade mix — ' + d.business_date, el('div', { className: 'scroll' }, table)));
+    into('dashboard', wrap);
+  } catch (ex) { failed('dashboard', ex); }
+}
+
+// --------------------------------------------------------------- products
+
+let productSearch = '', zeroOnly = false;
+
+async function renderProducts() {
+  loading('products');
+  try {
+    const qs = new URLSearchParams();
+    if (productSearch) qs.set('search', productSearch);
+    if (zeroOnly) qs.set('only_zero_price', 'true');
+    const rows = await api('/products' + (qs.toString() ? '?' + qs : ''));
+
+    const bar = el('div', { className: 'toolbar' });
+    const search = el('input', { type: 'search', placeholder: 'Search products…', value: productSearch });
+    search.addEventListener('change', () => { productSearch = search.value; renderProducts(); });
+    const zbtn = el('button', { className: 'btn small ' + (zeroOnly ? '' : 'ghost'),
+      textContent: 'Priced zero' });
+    zbtn.addEventListener('click', () => { zeroOnly = !zeroOnly; renderProducts(); });
+    bar.append(search, zbtn, el('span', { className: 'muted', textContent: rows.length + ' shown' }));
+
+    const table = el('table');
+    table.append(el('thead', {}, el('tr', {}, [
+      el('th', { textContent: '#' }),
+      el('th', { textContent: 'Product' }),
+      el('th', { className: 'num', textContent: 'Walk-in (A)' }),
+      el('th', { className: 'num', textContent: 'Aggregator (B)' }),
+      el('th', { textContent: 'Active' }),
+      el('th', { textContent: '' }),
+    ])));
+
+    const tb = el('tbody');
+    for (const p of rows) {
+      // Every control is named for its product. The column header alone is not
+      // enough: a screen reader on row 40 announces "edit text, 8.00" with no
+      // way to tell which item that is, and these edit real prices.
+      const a = el('input', { className: 'price', type: 'number', step: '0.01', min: '0',
+        value: money(p.price_a), ariaLabel: 'Walk-in price for ' + p.descript });
+      const b = el('input', { className: 'price', type: 'number', step: '0.01', min: '0',
+        value: p.price_b == null ? '' : money(p.price_b), placeholder: '—',
+        ariaLabel: 'Aggregator price for ' + p.descript });
+      const active = el('input', { type: 'checkbox', checked: p.is_active,
+        ariaLabel: p.descript + ' is available' });
+      const save = el('button', { className: 'btn small', textContent: 'Save',
+        ariaLabel: 'Save changes to ' + p.descript });
+
+      save.addEventListener('click', async () => {
+        const body = {};
+        const pa = parseMoney(a.value);
+        if (pa === null) return toast('Walk-in price must be a number');
+        if (pa !== p.price_a) body.price_a = pa;
+        if (b.value.trim() === '') {
+          if (p.price_b !== null) body.price_b = null;
+        } else {
+          const pb = parseMoney(b.value);
+          if (pb === null) return toast('Aggregator price must be a number');
+          if (pb !== p.price_b) body.price_b = pb;
+        }
+        if (active.checked !== p.is_active) body.is_active = active.checked;
+        if (!Object.keys(body).length) return toast('Nothing changed');
+
+        save.disabled = true;
+        try {
+          await api('/products/' + p.id, { method: 'PATCH', body: JSON.stringify(body) });
+          toast(p.descript + ' saved — tills will pull it on their next sync');
+          renderProducts();
+        } catch (ex) {
+          toast(ex.message);
+        } finally {
+          save.disabled = false;
+        }
+      });
+
+      tb.append(el('tr', {}, [
+        el('td', { className: 'muted', textContent: p.prodnum }),
+        el('td', {}, [
+          el('div', { textContent: p.descript }),
+          p.is_modifier ? el('div', { className: 'muted', style: 'font-size:12px', textContent: 'modifier' }) : el('span'),
+        ]),
+        el('td', { className: 'num' }, a),
+        el('td', { className: 'num' }, b),
+        el('td', {}, active),
+        el('td', {}, save),
+      ]));
+    }
+    if (!rows.length) tb.append(el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: 'Nothing matches.' })));
+    table.append(tb);
+
+    const p = el('section', { className: 'panel' }, [el('h2', { textContent: 'Products & prices' }), bar,
+      el('div', { className: 'scroll' }, table)]);
+    p.append(el('p', { className: 'note', textContent:
+      'Prices are VAT-inclusive, in SAR. Aggregator (B) is what Keeta, HungerStation and Jahez are ' +
+      'charged — the difference from walk-in is their commission. A product with no aggregator price ' +
+      'cannot be sold on an aggregator order at all: the till refuses it rather than quietly charging ' +
+      'the walk-in price.' }));
+    into('products', p);
+  } catch (ex) { failed('products', ex); }
+}
+
+// ---------------------------------------------------------------- devices
+
+async function renderDevices() {
+  loading('devices');
+  try {
+    const rows = await api('/devices');
+    const wrap = el('div');
+
+    const table = el('table');
+    table.append(el('thead', {}, el('tr', {}, [
+      el('th', { textContent: 'Till' }), el('th', { textContent: 'Branch' }),
+      el('th', { textContent: 'Role' }), el('th', { textContent: 'Prefix' }),
+      el('th', { textContent: 'ZATCA' }), el('th', { textContent: 'Last seen' }),
+      el('th', { className: 'num', textContent: 'Last ICV' }),
+    ])));
+    const tb = el('tbody');
+    for (const d of rows) {
+      const signed = d.csid_status && d.csid_status !== 'none';
+      tb.append(el('tr', {}, [
+        el('td', { textContent: d.label }),
+        el('td', { textContent: d.branch_name }),
+        el('td', { textContent: d.role.toUpperCase() }),
+        el('td', { textContent: d.receipt_prefix }),
+        el('td', {}, el('span', { className: 'pill ' + (signed ? 'ok' : 'bad'),
+          textContent: signed ? d.csid_status : 'not onboarded' })),
+        el('td', { textContent: when(d.last_seen_at) }),
+        el('td', { className: 'num', textContent: d.last_icv ?? '—' }),
+      ]));
+    }
+    if (!rows.length) tb.append(el('tr', {}, el('td', { colSpan: 7, className: 'muted', textContent: 'No devices yet.' })));
+    table.append(tb);
+    wrap.append(panel('Devices', el('div', { className: 'scroll' }, table)));
+
+    // Add a till
+    const form = el('div', { className: 'body' });
+    const branchSel = el('select');
+    for (const b of branches) branchSel.append(el('option', { value: b.id, textContent: b.name }));
+    const label = el('input', { type: 'text', placeholder: 'Front counter' });
+    const prefix = el('input', { type: 'text', placeholder: 'T01', maxLength: 8 });
+    const role = el('select');
+    for (const r of ['pos', 'kds', 'cds']) role.append(el('option', { value: r, textContent: r.toUpperCase() }));
+    const go = el('button', { className: 'btn', textContent: 'Create code' });
+    const out = el('div');
+
+    go.addEventListener('click', async () => {
+      if (!branchSel.value) return toast('Pick a branch');
+      if (!label.value.trim() || !prefix.value.trim()) return toast('Name and receipt prefix are both needed');
+      go.disabled = true;
+      try {
+        const qs = new URLSearchParams({
+          branch_id: branchSel.value, label: label.value.trim(),
+          receipt_prefix: prefix.value.trim(), role: role.value,
+        });
+        const r = await api('/devices/enrolments?' + qs, { method: 'POST' });
+        out.replaceChildren(
+          el('p', { className: 'muted', style: 'margin:14px 0 0',
+            textContent: 'Type this into the tablet’s setup screen. It works once and expires ' + when(r.expires_at) + '.' }),
+          el('div', { className: 'code', textContent: r.code }),
+        );
+        renderDevices();
+      } catch (ex) { toast(ex.message); } finally { go.disabled = false; }
+    });
+
+    const row = el('div', { className: 'row' });
+    const field = (lbl, ctl) => el('div', {}, [el('label', { textContent: lbl }), ctl]);
+    row.append(field('Branch', branchSel), field('Name', label), field('Receipt prefix', prefix), field('Role', role));
+    form.append(row, el('div', { style: 'margin-top:14px' }, go), out);
+    wrap.append(panel('Add a device', form));
+
+    into('devices', wrap);
+  } catch (ex) { failed('devices', ex); }
+}
+
+// ------------------------------------------------------------------ sales
+
+let unsignedOnly = false;
+
+async function renderSales() {
+  loading('sales');
+  try {
+    const rows = await api('/sales' + (unsignedOnly ? '?unsigned_only=true' : ''));
+
+    const bar = el('div', { className: 'toolbar' });
+    const btn = el('button', { className: 'btn small ' + (unsignedOnly ? '' : 'ghost'), textContent: 'Unsigned only' });
+    btn.addEventListener('click', () => { unsignedOnly = !unsignedOnly; renderSales(); });
+    bar.append(btn, el('span', { className: 'muted', textContent: rows.length + ' shown' }));
+
+    const table = el('table');
+    table.append(el('thead', {}, el('tr', {}, [
+      el('th', { textContent: 'Receipt' }), el('th', { textContent: 'Closed' }),
+      el('th', { textContent: 'Type' }), el('th', { textContent: 'Ref' }),
+      el('th', { className: 'num', textContent: 'Net' }), el('th', { className: 'num', textContent: 'VAT' }),
+      el('th', { className: 'num', textContent: 'Total' }), el('th', { textContent: 'ZATCA' }),
+      el('th', { className: 'num', textContent: 'ICV' }),
+    ])));
+    const tb = el('tbody');
+    for (const s of rows) {
+      tb.append(el('tr', {}, [
+        el('td', { textContent: s.receipt_no }),
+        el('td', { textContent: when(s.closed_at) }),
+        el('td', { textContent: s.sale_type_name }),
+        el('td', { className: 'muted', textContent: s.external_ref || (s.order_no != null ? '#' + s.order_no : '—') }),
+        el('td', { className: 'num', textContent: money(s.net_total) }),
+        el('td', { className: 'num', textContent: money(s.tax_total) }),
+        el('td', { className: 'num', textContent: money(s.final_total) }),
+        el('td', {}, el('span', { className: 'pill ' + (s.is_signed ? 'ok' : 'bad'),
+          title: s.zatca_error || '', textContent: s.is_signed ? s.zatca_status : 'unsigned' })),
+        el('td', { className: 'num', textContent: s.zatca_icv ?? '—' }),
+      ]));
+    }
+    if (!rows.length) tb.append(el('tr', {}, el('td', { colSpan: 9, className: 'muted', textContent: 'No sales.' })));
+    table.append(tb);
+
+    const p = el('section', { className: 'panel' }, [el('h2', { textContent: 'Sales' }), bar,
+      el('div', { className: 'scroll' }, table)]);
+    into('sales', p);
+  } catch (ex) { failed('sales', ex); }
+}
+
+// ------------------------------------------------------------------- boot
+
+(async () => {
+  if (!token) return;
+  try { await start(await api('/me')); } catch { signOut(); }
+})();
+</script>
+</body>
+</html>

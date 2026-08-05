@@ -476,3 +476,105 @@ class OrderNumberIn(BaseModel):
 class OrderNumberOut(BaseModel):
     business_date: dt.date
     order_no: int
+
+
+# --------------------------------------------------------------------------
+# Back office
+# --------------------------------------------------------------------------
+
+class OfficeLoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+
+
+class OfficeLoginOut(BaseModel):
+    token: str
+    name: str
+    email: str
+    role: str
+    company_name: str
+
+
+class OfficeDashboard(BaseModel):
+    business_date: dt.date
+    sale_count: int
+    gross_total: int
+    vat_total: int
+    net_total: int
+    # Sales that closed without a ZATCA stamp. Not a queue that drains —
+    # each one is an invoice that was never legally issued.
+    unsigned_sales: int
+    unreported_sales: int
+    active_devices: int
+    silent_devices: int
+    by_sale_type: list[dict]
+
+
+class OfficeProductOut(BaseModel):
+    id: uuid.UUID
+    prodnum: int
+    descript: str
+    descript_ar: str | None = None
+    price_a: int
+    price_b: int | None = None
+    price_j: int | None = None
+    tax_applies: bool
+    is_active: bool
+    is_modifier: bool
+    print_loc: int
+    server_version: int
+
+
+class OfficeProductUpdate(BaseModel):
+    """Every field optional: a PATCH changes what it names and nothing else.
+
+    Prices are VAT-inclusive halalas, the same unit as everywhere else — the
+    UI converts, the API does not, so there is one place where 8.00 becomes
+    800 and it is not on the wire.
+    """
+
+    descript: str | None = Field(default=None, min_length=1)
+    descript_ar: str | None = None
+    price_a: int | None = Field(default=None, ge=0)
+    price_b: int | None = Field(default=None, ge=0)
+    price_j: int | None = Field(default=None, ge=0)
+    tax_applies: bool | None = None
+    is_active: bool | None = None
+
+
+class OfficeDeviceOut(BaseModel):
+    id: uuid.UUID
+    label: str
+    branch_name: str
+    role: str
+    receipt_prefix: str
+    platform: str | None = None
+    app_version: str | None = None
+    csid_status: str
+    last_seen_at: dt.datetime | None = None
+    last_icv: int | None = None
+    is_active: bool
+
+
+class OfficeEnrolmentOut(BaseModel):
+    code: str
+    branch_name: str
+    label: str
+    role: str
+    expires_at: dt.datetime | None = None
+
+
+class OfficeSaleOut(BaseModel):
+    receipt_no: str
+    closed_at: dt.datetime | None = None
+    business_date: dt.date
+    sale_type_name: str
+    order_no: int | None = None
+    external_ref: str | None = None
+    net_total: int
+    tax_total: int
+    final_total: int
+    is_signed: bool
+    zatca_icv: int | None = None
+    zatca_status: str
+    zatca_error: str | None = None

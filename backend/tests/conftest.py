@@ -26,7 +26,9 @@ from httpx import ASGITransport, AsyncClient  # noqa: E402
 from app.auth import issue_device_token  # noqa: E402
 from app.db import SessionLocal, create_all, engine  # noqa: E402
 from app.main import app  # noqa: E402
+from app.office_auth import hash_password, issue_office_token  # noqa: E402
 from app.models import (  # noqa: E402
+    BackOfficeUser,
     Branch,
     Company,
     Device,
@@ -38,6 +40,10 @@ from app.models import (  # noqa: E402
     TaxRate,
     Tenant,
 )
+
+# Shared by every seeded back-office user. Hashing is scrypt and deliberately
+# slow, so one constant keeps the suite from paying that cost per fixture.
+OFFICE_PASSWORD = "test-office-password"
 
 
 def _now() -> dt.datetime:
@@ -158,6 +164,19 @@ async def seeded():
                 ))
                 await s.flush()
 
+                # A back-office owner per tenant, so cross-tenant access can
+                # be tested from the office side as well as the device side.
+                office_email = f"owner-{key}-{uuid.uuid4().hex[:8]}@example.sa"
+                office_user = BackOfficeUser(
+                    tenant_id=tenant.id,
+                    email=office_email,
+                    name=f"Owner {key.upper()}",
+                    role="owner",
+                    password_hash=hash_password(OFFICE_PASSWORD),
+                )
+                s.add(office_user)
+                await s.flush()
+
                 made[key] = {
                     "tenant_id": tenant.id,
                     "company_id": company.id,
@@ -165,6 +184,9 @@ async def seeded():
                     "device_id": device.id,
                     "prodnum": prodnum,
                     "token": issue_device_token(device.id, tenant.id),
+                    "office_email": office_email,
+                    "office_user_id": office_user.id,
+                    "office_token": issue_office_token(office_user.id, tenant.id),
                 }
 
     yield made
