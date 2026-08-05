@@ -303,19 +303,23 @@ void main() {
 
     test('rejected sale is flagged, not retried forever', () async {
       final uuid = makeSale();
+      var pushes = 0;
       final api = SyncApi(
         baseUrl: 'http://backend',
         token: 'tok',
-        client: MockClient((request) async => _json({
-              'accepted': [],
-              'rejected': [
-                {'sale_uuid': uuid, 'error': 'closed sale has no ZATCA QR'}
-              ],
-            })),
+        client: MockClient((request) async {
+          pushes += 1;
+          return _json({
+            'accepted': [],
+            'rejected': [
+              {'sale_uuid': uuid, 'error': 'closed sale has no ZATCA QR'}
+            ],
+          });
+        }),
       );
 
-      final result =
-          await SyncService(db: db, api: api).pushOutbox();
+      final sync = SyncService(db: db, api: api);
+      final result = await sync.pushOutbox();
       expect(result.sent, 0);
       expect(result.failed, 1);
 
@@ -324,6 +328,53 @@ void main() {
       expect(outbox['attempts'], 1);
       expect(outbox['last_error'], contains('ZATCA'));
       expect(db.saleRow(uuid)['sync_status'], 'failed');
+
+      // "Not retried" has to mean across cycles, not just within one. The
+      // sync worker drains on a timer, so a row that keeps coming back is a
+      // dead sale re-pushed for the life of the device.
+      final again = await sync.pushOutbox();
+      expect(again.sent, 0);
+      expect(again.failed, 0);
+      expect(pushes, 1, reason: 'a flagged sale must never be pushed again');
+      expect(
+        db.raw.select('SELECT attempts FROM outbox').first['attempts'],
+        1,
+      );
+    });
+
+    test('a fresh sale still drains past a flagged one', () async {
+      final dead = makeSale();
+      final api = SyncApi(
+        baseUrl: 'http://backend',
+        token: 'tok',
+        client: MockClient((request) async {
+          final body = (jsonDecode(request.body) as List).cast<Map>();
+          final uuid = body.single['sale_uuid'];
+          return _json(uuid == dead
+              ? {
+                  'accepted': [],
+                  'rejected': [
+                    {'sale_uuid': uuid, 'error': 'closed sale has no ZATCA QR'}
+                  ],
+                }
+              : {
+                  'accepted': [
+                    {'sale_uuid': uuid}
+                  ],
+                  'rejected': [],
+                });
+        }),
+      );
+
+      final sync = SyncService(db: db, api: api);
+      await sync.pushOutbox();
+
+      // One poison record must not stall the queue behind it.
+      final good = makeSale();
+      final result = await sync.pushOutbox();
+      expect(result.sent, 1);
+      expect(db.saleRow(good)['sync_status'], 'acked');
+      expect(db.outboxDepth(), 1, reason: 'only the flagged row remains');
     });
   });
 
@@ -351,6 +402,17 @@ void main() {
               'kds_station_no': null,
               'branch_name': 'Arid Branch',
               'tenant_mode': 'standalone',
+              'seller_name': 'Fatima Restaurant',
+              'seller_name_ar': 'مطعم فاطمة',
+              'seller_vat': '310000000000003',
+              'seller_cr': '1010012345',
+              'seller_address': {
+                'street': 'King Fahd Road',
+                'building': '8228',
+                'city': 'Riyadh',
+                'postal_code': '12244',
+                'country': 'SA',
+              },
             });
           }
           expect(request.url.path, '/v1/catalog');
@@ -370,6 +432,50 @@ void main() {
       expect(device['receipt_prefix'], 'T07');
       expect(device['api_base_url'], 'http://backend');
       expect(db.productsForScreen(2010).length, 2);
+
+      // Without the seller identity the device could never issue a compliant
+      // invoice offline, so enrolment is the one chance to deliver it.
+      expect(device['zatca_vat_number'], '310000000000003');
+      expect(device['zatca_seller_name'], 'مطعم فاطمة',
+          reason: 'ZATCA wants the Arabic registered name on the invoice');
+      expect(device['zatca_seller_cr'], '1010012345');
+      expect(
+        (jsonDecode(device['zatca_seller_address'] as String)
+            as Map)['postal_code'],
+        '12244',
+      );
+    });
+
+    test('falls back to the Latin name when no Arabic one is registered',
+        () async {
+      final api = SyncApi(
+        baseUrl: 'http://backend',
+        client: MockClient((request) async {
+          if (request.url.path == '/v1/enrol') {
+            return _json({
+              'token': 'jwt-abc',
+              'device_id': 'bbbbbbbb-0000-4000-8000-000000000001',
+              'role': 'pos',
+              'receipt_prefix': 'T07',
+              'kds_station_no': null,
+              'branch_name': 'Arid Branch',
+              'tenant_mode': 'standalone',
+              'seller_name': 'Fatima Restaurant',
+              'seller_name_ar': null,
+              'seller_vat': '310000000000003',
+              'seller_cr': null,
+              'seller_address': <String, dynamic>{},
+            });
+          }
+          return _json(catalogFixture());
+        }),
+      );
+
+      await SyncService(db: db, api: api)
+          .enrolAndPrime(code: 'CODE-123456789012', deviceUuid: 'tablet-xyz');
+
+      final device = db.raw.select('SELECT * FROM device WHERE id = 1').first;
+      expect(device['zatca_seller_name'], 'Fatima Restaurant');
     });
   });
 }

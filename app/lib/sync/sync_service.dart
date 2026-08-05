@@ -32,20 +32,37 @@ class SyncService {
     required String deviceUuid,
   }) async {
     final result = await api.enrol(code: code, deviceUuid: deviceUuid);
+    // The ZATCA seller identity is stored here and never refreshed by a
+    // catalog pull: an invoice already in this device's chain was issued
+    // under the identity in force at the time, and rewriting it would make
+    // the chain describe invoices that were never issued. A company that
+    // re-registers gets a re-enrolled device.
     db.raw.execute(
       'INSERT INTO device (id, device_uuid, station_no, store_no, '
-      '  receipt_prefix, role, kds_station_no, api_base_url, auth_token) '
-      'VALUES (1, ?, 1, 1, ?, ?, ?, ?, ?) '
+      '  receipt_prefix, role, kds_station_no, api_base_url, auth_token, '
+      '  zatca_vat_number, zatca_seller_name, zatca_seller_cr, '
+      '  zatca_seller_address) '
+      'VALUES (1, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
       '  device_uuid=excluded.device_uuid, '
       '  receipt_prefix=excluded.receipt_prefix, '
       '  role=excluded.role, '
       '  kds_station_no=excluded.kds_station_no, '
       '  api_base_url=excluded.api_base_url, '
-      '  auth_token=excluded.auth_token',
+      '  auth_token=excluded.auth_token, '
+      '  zatca_vat_number=excluded.zatca_vat_number, '
+      '  zatca_seller_name=excluded.zatca_seller_name, '
+      '  zatca_seller_cr=excluded.zatca_seller_cr, '
+      '  zatca_seller_address=excluded.zatca_seller_address',
       [
         deviceUuid, result.receiptPrefix, result.role,
         result.kdsStationNo, api.baseUrl, result.token,
+        result.sellerVat,
+        // ZATCA wants the Arabic registered name on the invoice; the Latin
+        // one is the fallback when a company has not supplied it.
+        result.sellerNameAr ?? result.sellerName,
+        result.sellerCr,
+        jsonEncode(result.sellerAddress),
       ],
     );
     await pullCatalog();
@@ -382,9 +399,15 @@ class SyncService {
   }
 
   /// Drain the outbox. Returns (sent, flaggedAsFailed).
+  ///
+  /// Rows already flagged with a `last_error` are skipped, not retried: the
+  /// backend rejected those bytes on validation and the same bytes fail the
+  /// same way forever. Without this filter every sync cycle would re-push
+  /// every permanently-dead sale for the life of the device.
   Future<({int sent, int failed})> pushOutbox() async {
     final rows = db.raw.select(
       "SELECT id, entity_uuid FROM outbox WHERE entity = 'sale' "
+      '  AND last_error IS NULL '
       'ORDER BY id',
     );
     var sent = 0;

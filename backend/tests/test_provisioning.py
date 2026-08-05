@@ -94,6 +94,11 @@ async def test_full_enrolment_gives_a_working_token(client, seeded):
     body = r.json()
     assert body["receipt_prefix"] == "T03"
     assert body["branch_name"]
+    # The device invoices offline under the company's legal identity, so
+    # enrolment must hand it over — there is no later chance to ask.
+    assert body["seller_name"].endswith(" Co")
+    assert len(body["seller_vat"]) == 15
+    assert body["seller_address"]["city"] == "Riyadh"
 
     # The token must actually work as a device credential.
     q = await client.get(

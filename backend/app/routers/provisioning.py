@@ -27,7 +27,7 @@ from sqlalchemy import select
 from ..auth import DeviceContext, current_device, issue_device_token, require_admin
 from ..config import settings
 from ..db import SessionLocal, tenant_session
-from ..models import Branch, Device, EnrolmentCode, OrderNumberCounter, Tenant
+from ..models import Branch, Company, Device, EnrolmentCode, OrderNumberCounter, Tenant
 from ..schemas import (
     EnrolmentCodeOut,
     EnrolmentCreateIn,
@@ -156,6 +156,11 @@ async def enrol(body: EnrolmentRedeemIn) -> EnrolmentRedeemOut:
         tenant = (
             await session.execute(select(Tenant).where(Tenant.id == tenant_id))
         ).scalar_one()
+        company = (
+            await session.execute(
+                select(Company).where(Company.id == branch.company_id)
+            )
+        ).scalar_one()
 
         token = issue_device_token(device.id, tenant_id)
         return EnrolmentRedeemOut(
@@ -166,6 +171,11 @@ async def enrol(body: EnrolmentRedeemIn) -> EnrolmentRedeemOut:
             kds_station_no=device.kds_station_no,
             branch_name=branch.name,
             tenant_mode=tenant.mode,
+            seller_name=company.name,
+            seller_name_ar=company.name_ar,
+            seller_vat=company.vat_number,
+            seller_cr=company.cr_number,
+            seller_address=company.address or {},
         )
 
 

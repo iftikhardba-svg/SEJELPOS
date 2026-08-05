@@ -459,6 +459,14 @@ class EnrolmentRedeemOut(BaseModel):
     kds_station_no: int | None = None
     branch_name: str
     tenant_mode: str
+    # The legal seller identity the device invoices under. Delivered at
+    # enrolment because the tablet must be able to issue a compliant ZATCA
+    # invoice with no network — it cannot ask for these at sale time.
+    seller_name: str
+    seller_name_ar: str | None = None
+    seller_vat: str
+    seller_cr: str | None = None
+    seller_address: dict = Field(default_factory=dict)
 
 
 class OrderNumberIn(BaseModel):

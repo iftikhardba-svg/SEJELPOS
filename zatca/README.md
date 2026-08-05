@@ -1,11 +1,37 @@
 # ZATCA Phase 2 signing
 
 Reference implementation of the cryptographic parts of ZATCA e-invoicing, in
-Python so it can be tested. The tablet runs a Dart port of the same logic.
+Python so it can be tested. The tablet runs a Dart port of the same logic in
+`app/lib/zatca/`.
 
 ```powershell
-python -m pytest        # 37 tests
+python -m pytest        # 62 tests
 ```
+
+## Keeping the Dart port honest
+
+The two implementations must produce **byte-identical** output — the invoice
+hash is SHA-256 over canonical XML, so a single differing byte is a different
+invoice. They are pinned to each other by golden vectors rather than by
+inspection:
+
+```powershell
+python tools/gen_golden.py     # writes app/test/zatca/golden.json
+cd ../app; flutter test test/zatca/
+```
+
+`gen_golden.py` emits TLV payloads, money and timestamp formatting, the chain
+seed, three full invoices (canonical bytes + hash), a key pair and a QR.
+`app/test/zatca/golden_test.dart` replays every case and compares bytes, so
+when this library is corrected against ZATCA's SDK, the tablet either follows
+or the build fails.
+
+ECDSA signatures cannot be compared this way — the nonce is random — so the
+goldens carry a Python-made signature that Dart **verifies**, and vice versa.
+That is the stronger check anyway: it proves both sides agree on the curve,
+the digest and the DER encoding.
+
+**Regenerate the goldens after any change here, and re-run the Dart tests.**
 
 ## Why this runs on the device
 
@@ -74,17 +100,39 @@ in the sandbox, and only then treat this as correct. A hash that looks right
 locally and is wrong by one canonicalisation rule fails at Fatoora, after the
 customer has already walked out with the receipt.
 
+The Dart port shares every one of these gaps — it is the same logic, proven
+identical, which means it is identically unvalidated. Byte-parity with this
+library is not evidence of compliance; it only guarantees that fixing this
+library fixes the tablet.
+
 `sample_invoice.xml` is a generated example, useful as the first thing to feed
 the validator.
 
-**Private key custody is not implemented for Android.** This module loads PEM
-bytes, which is fine for tests and server-side tooling. On the tablet the key
-must live in the **Android Keystore** and never enter application memory — the
-Dart port must delegate the signing operation, not import the key.
+### Key custody: the Android Keystore cannot hold this key
+
+An earlier version of this file said the private key must live in the Android
+Keystore. **It cannot.** Android Keystore generates and stores NIST curves
+(P-256/384/521) only; ZATCA mandates **secp256k1**, which it will not accept.
+There is no configuration that fixes this — the constraint is the hardware
+keymaster's supported curve list.
+
+What is achievable, and what the Dart port is built for:
+
+- the key is generated in-process and stored in application-private storage;
+- it is encrypted at rest under an **AES key that does live in the Keystore**,
+  so extracting the file off a rooted device does not yield a usable key;
+- `ZatcaKeyProvider` (`app/lib/zatca/device_signer.dart`) is the seam — the
+  in-memory implementation is for tests, and the encrypted-storage one is the
+  production path.
+
+This is weaker than a hardware-bound key and it is the ceiling the platform
+allows. Worth stating plainly to a customer rather than implying hardware
+custody we do not have.
 
 ## Onboarding flow (for reference)
 
-1. Generate a secp256k1 key pair on the device (in the Keystore)
+1. Generate a secp256k1 key pair on the device (see key custody above — this
+   is a software key by necessity, not a Keystore-resident one)
 2. Build a CSR carrying the EGS serial and the company VAT number
 3. Send it to ZATCA → compliance CSID
 4. Pass the compliance checks → production CSID

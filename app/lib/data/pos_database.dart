@@ -17,6 +17,7 @@ import 'package:uuid/uuid.dart';
 
 import '../core/money.dart';
 import '../core/pricing.dart';
+import '../zatca/device_signer.dart';
 
 const _uuid = Uuid();
 
@@ -68,6 +69,7 @@ class CompletedSale {
     required this.taxTotal,
     required this.finalTotal,
     required this.kitchenStations,
+    this.stamp,
   });
 
   final String saleUuid;
@@ -78,19 +80,29 @@ class CompletedSale {
 
   /// Station names that received a ticket for this sale.
   final List<String> kitchenStations;
+
+  /// The ZATCA stamp, or null when this device is not provisioned to sign.
+  /// Null means the receipt prints the UNSIGNED banner and the backend will
+  /// reject the push — both deliberate, both visible.
+  final ZatcaStamp? stamp;
 }
 
 class PosDatabase {
-  PosDatabase(this._db);
+  PosDatabase(this._db, {this.signer});
 
   final Database _db;
 
+  /// Stamps each closed sale as this device's next ZATCA invoice. Null on a
+  /// device that is not provisioned to sign; sales still complete and print
+  /// with the UNSIGNED banner.
+  final DeviceSigner? signer;
+
   /// Opens an in-memory database and builds it from [schemaSql] — the content
   /// of assets/schema.sql. Used by tests and the demo path.
-  factory PosDatabase.openInMemory(String schemaSql) {
+  factory PosDatabase.openInMemory(String schemaSql, {DeviceSigner? signer}) {
     final db = sqlite3.openInMemory();
     db.execute(schemaSql);
-    return PosDatabase(db);
+    return PosDatabase(db, signer: signer);
   }
 
   /// Opens (or creates) the on-disk database at [path].
@@ -100,7 +112,8 @@ class PosDatabase {
   /// schema built the file, so future tablet migrations have something to
   /// key off. foreign_keys is per-connection in SQLite and must be switched
   /// on at every open, not just at creation.
-  factory PosDatabase.openFile(String path, String schemaSql) {
+  factory PosDatabase.openFile(String path, String schemaSql,
+      {DeviceSigner? signer}) {
     final db = sqlite3.open(path);
     db.execute('PRAGMA foreign_keys = ON');
     final fresh = db
@@ -111,7 +124,7 @@ class PosDatabase {
       db.execute(schemaSql);
       db.execute('PRAGMA user_version = 1');
     }
-    return PosDatabase(db);
+    return PosDatabase(db, signer: signer);
   }
 
   void dispose() => _db.dispose();
@@ -295,6 +308,13 @@ class PosDatabase {
         [_uuid.v4(), saleUuid, methodnum, grossTotal, grossTotal, nowIso],
       );
 
+      // Stamp it as this device's next ZATCA invoice. Inside the transaction
+      // by necessity: the stamp and the ICV it consumes have to land together
+      // or the device's hash chain breaks. A device that cannot sign returns
+      // null and the sale stands — the customer is never blocked by a
+      // provisioning problem.
+      final stamp = signer?.stampSale(_db, saleUuid);
+
       // The outbox row IS the guarantee the sale reaches the backend. Written
       // in the same transaction as the sale: there is no code path where one
       // exists without the other.
@@ -326,6 +346,7 @@ class PosDatabase {
         taxTotal: taxTotal,
         finalTotal: grossTotal,
         kitchenStations: stations,
+        stamp: stamp,
       );
     } catch (_) {
       _db.execute('ROLLBACK');

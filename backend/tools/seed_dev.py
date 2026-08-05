@@ -42,7 +42,15 @@ async def main(database_url: str) -> None:
             name="Fatima Restaurant",
             name_ar="مطعم فاطمة",
             vat_number="310000000000003",
-            address={"city": "Riyadh", "country": "SA"},
+            cr_number="1010012345",
+            address={
+                "street": "شارع الملك فهد",
+                "building": "8228",
+                "district": "العليا",
+                "city": "الرياض",
+                "postal_code": "12244",
+                "country": "SA",
+            },
         )
         s.add(company)
         await s.flush()

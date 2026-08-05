@@ -29,6 +29,11 @@ class EnrolmentResult {
     required this.kdsStationNo,
     required this.branchName,
     required this.tenantMode,
+    required this.sellerName,
+    required this.sellerVat,
+    this.sellerNameAr,
+    this.sellerCr,
+    this.sellerAddress = const {},
   });
 
   factory EnrolmentResult.fromJson(Map<String, dynamic> j) => EnrolmentResult(
@@ -39,6 +44,12 @@ class EnrolmentResult {
         kdsStationNo: j['kds_station_no'] as int?,
         branchName: j['branch_name'] as String,
         tenantMode: j['tenant_mode'] as String,
+        sellerName: j['seller_name'] as String,
+        sellerNameAr: j['seller_name_ar'] as String?,
+        sellerVat: j['seller_vat'] as String,
+        sellerCr: j['seller_cr'] as String?,
+        sellerAddress:
+            (j['seller_address'] as Map?)?.cast<String, dynamic>() ?? const {},
       );
 
   final String token;
@@ -48,6 +59,15 @@ class EnrolmentResult {
   final int? kdsStationNo;
   final String branchName;
   final String tenantMode;
+
+  /// The legal seller this device invoices as. Delivered at enrolment because
+  /// a tablet must be able to issue a ZATCA invoice with no network — there
+  /// is no later opportunity to ask.
+  final String sellerName;
+  final String? sellerNameAr;
+  final String sellerVat;
+  final String? sellerCr;
+  final Map<String, dynamic> sellerAddress;
 }
 
 class SyncApi {

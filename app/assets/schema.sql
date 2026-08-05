@@ -49,13 +49,22 @@ CREATE TABLE device (
     -- Receipt printer on the LAN (ESC/POS over port 9100). Unset = no printing.
     printer_host    TEXT,
     printer_port    INTEGER NOT NULL DEFAULT 9100,
-    -- ZATCA EGS identity. The private key lives in the Android Keystore,
-    -- NEVER in this database — only the public material and metadata here.
+    -- ZATCA EGS identity. Only public material and metadata live here.
+    --
+    -- The private key is NOT in this database and NOT in the Android
+    -- Keystore either: ZATCA mandates secp256k1 and the Keystore holds NIST
+    -- curves only, so a Keystore-resident signing key is not possible. It
+    -- lives in application storage, encrypted at rest under a Keystore-held
+    -- symmetric key. See lib/zatca/device_signer.dart.
     zatca_egs_serial TEXT,              -- 1-<vendor>|2-<model>|3-<device_uuid>
     zatca_csid       TEXT,              -- compliance/production CSID (cert)
     zatca_csid_expires_at TEXT,
+    zatca_public_key TEXT,              -- base64 SubjectPublicKeyInfo DER (QR tag 8)
+    zatca_csid_signature TEXT,          -- base64, ZATCA's signature over it (QR tag 9)
     zatca_vat_number TEXT,              -- seller VAT registration number
     zatca_seller_name TEXT,
+    zatca_seller_cr  TEXT,              -- commercial registration number
+    zatca_seller_address TEXT,          -- JSON: street/building/district/city/postal_code
     zatca_next_icv   INTEGER NOT NULL DEFAULT 1,  -- strictly sequential, never reused
     zatca_last_pih   TEXT               -- hash of this device's previous invoice
 );

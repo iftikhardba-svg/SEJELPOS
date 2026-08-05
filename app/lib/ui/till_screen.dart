@@ -195,8 +195,9 @@ class _TillScreenState extends State<TillScreen> {
       taxTotal: sale.taxTotal,
       finalTotal: sale.finalTotal,
       payMethod: methodName,
-      zatcaQr: null, // arrives with the ZATCA port; until then the paper
-      //              carries an UNSIGNED banner instead of a fake QR
+      // Null on a device not provisioned to sign — the receipt then carries
+      // the UNSIGNED banner rather than a QR that would not validate.
+      zatcaQr: sale.stamp?.qr,
     ));
 
     try {
