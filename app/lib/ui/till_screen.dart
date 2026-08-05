@@ -368,6 +368,13 @@ class _TillScreenState extends State<TillScreen> {
                 style: OutlinedButton.styleFrom(
                   alignment: Alignment.topLeft,
                   padding: const EdgeInsets.all(10),
+                  // Material 3 defaults OutlinedButton to a StadiumBorder,
+                  // which on an 84px-tall tile is a full oval: the corners eat
+                  // the item name and the price, and the grid stops reading as
+                  // a grid. A menu tile has to be a rectangle.
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,

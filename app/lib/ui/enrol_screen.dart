@@ -89,6 +89,10 @@ class _EnrolScreenState extends State<EnrolScreen> {
     return Scaffold(
       body: Center(
         child: ConstrainedBox(
+          // Keyed so a layout test can measure THIS box. Finding it by type
+          // picks up a full-bleed one from Scaffold's own tree instead, which
+          // is trivially centred and proves nothing.
+          key: const Key('enrol-card'),
           constraints: const BoxConstraints(maxWidth: 420),
           child: Padding(
             padding: const EdgeInsets.all(24),
