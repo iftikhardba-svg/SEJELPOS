@@ -1,6 +1,12 @@
 /// Enrol an installed device's database from the command line.
 ///
-///     dart run tool/enrol_device.dart <dbPath> <baseUrl> <enrolmentCode>
+///     dart run tool/enrol_device.dart <baseUrl> <enrolmentCode>
+///     dart run tool/enrol_device.dart <baseUrl> <code> <dbPath>
+///
+/// The database path is optional and defaults to where the app actually puts
+/// it. That default exists because the path is the easy thing to get wrong:
+/// `%APPDATA%` is cmd syntax and does not expand in PowerShell, so pasting it
+/// hands this tool a literal string and it reports a missing database.
 ///
 /// Runs the same `SyncService.enrolAndPrime` the setup screen calls, against
 /// the real on-disk database the app opens - so it is the app's own code path,
@@ -25,14 +31,38 @@ import 'package:pos_app/data/pos_database.dart';
 import 'package:pos_app/sync/sync_api.dart';
 import 'package:pos_app/sync/sync_service.dart';
 
+/// Where the app's own `getApplicationSupportDirectory` lands on each
+/// platform, for the bundle id in the runner.
+String? _defaultDbPath() {
+  if (Platform.isWindows) {
+    final appData = Platform.environment['APPDATA'];
+    if (appData == null) return null;
+    return '$appData\\sa.pos\\pos_app\\pos.db';
+  }
+  final home = Platform.environment['HOME'];
+  if (home == null) return null;
+  if (Platform.isMacOS) {
+    return '$home/Library/Application Support/sa.pos.pos_app/pos.db';
+  }
+  return '$home/.local/share/sa.pos.pos_app/pos.db';
+}
+
 Future<void> main(List<String> args) async {
-  if (args.length != 3) {
+  if (args.length < 2 || args.length > 3) {
     stderr.writeln(
-      'usage: dart run tool/enrol_device.dart <dbPath> <baseUrl> <code>',
+      'usage: dart run tool/enrol_device.dart <baseUrl> <code> [dbPath]',
     );
     exit(2);
   }
-  final [dbPath, baseUrl, code] = args;
+  final baseUrl = args[0];
+  final code = args[1];
+  final dbPath = args.length == 3 ? args[2] : _defaultDbPath();
+
+  if (dbPath == null) {
+    stderr.writeln('could not work out where the app keeps its database; '
+        'pass the path as the third argument');
+    exit(2);
+  }
 
   if (Platform.isWindows) {
     open.overrideFor(
@@ -42,10 +72,15 @@ Future<void> main(List<String> args) async {
   }
 
   if (!File(dbPath).existsSync()) {
-    stderr.writeln('no database at $dbPath - run the app once first, so it '
-        'creates one with the current schema');
+    stderr.writeln('no database at $dbPath\n'
+        'Run the app once first so it creates one with the current schema. '
+        'If you passed the path yourself, note that %APPDATA% is cmd syntax '
+        'and does not expand in PowerShell - use \$env:APPDATA, or leave the '
+        'argument off entirely.');
     exit(1);
   }
+
+  stdout.writeln('database: $dbPath');
 
   final schema = File('assets/schema.sql').readAsStringSync();
   final db = PosDatabase.openFile(dbPath, schema);
