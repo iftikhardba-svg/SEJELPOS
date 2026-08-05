@@ -9,6 +9,8 @@ without the right kind of token.
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy import select
 
@@ -343,9 +345,12 @@ async def test_an_enrolment_code_from_the_office_actually_enrols(
     assert r.status_code == 201, r.text
     code = r.json()["code"]
 
+    # Randomised: device_uuid is globally unique, and the PostgreSQL test
+    # database persists between runs, so a fixed value passes once and 409s
+    # forever after.
     enrolled = await client.post("/v1/enrol", json={
         "code": code,
-        "device_uuid": "office-made-device-0001",
+        "device_uuid": f"office-made-{uuid.uuid4().hex[:12]}",
         "platform": "windows",
     })
     assert enrolled.status_code == 200, enrolled.text

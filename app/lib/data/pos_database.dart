@@ -165,11 +165,26 @@ class PosDatabase {
     return [for (final r in rows) _product(r)];
   }
 
+  /// Menu screens a cashier can actually use.
+  ///
+  /// Screens with no sellable product on them are excluded. A migrated
+  /// PixelPoint catalog carries plenty of them — 'No Page', 'Test Page',
+  /// 'Commands' — and they sort to the front, so the till opened on an empty
+  /// grid and a cashier saw nothing at all. Nothing is deleted: the screens
+  /// remain in the catalog and in the back office, they just do not take a
+  /// tab on a till where they would do nothing.
   List<({int menuId, String name})> menuScreens() {
     final rows = _db.select(
-      'SELECT menu_id, name FROM menu_screen '
-      'WHERE is_active = 1 AND is_deleted = 0 AND is_modifier_screen = 0 '
-      'ORDER BY sort_order, menu_id',
+      'SELECT s.menu_id, s.name FROM menu_screen s '
+      'WHERE s.is_active = 1 AND s.is_deleted = 0 '
+      '  AND s.is_modifier_screen = 0 '
+      '  AND EXISTS ('
+      '    SELECT 1 FROM menu_button b '
+      '    JOIN product p ON p.prodnum = b.prodnum '
+      '    WHERE b.menu_id = s.menu_id AND b.is_deleted = 0 '
+      '      AND p.is_active = 1 AND p.is_deleted = 0 AND p.is_modifier = 0'
+      '  ) '
+      'ORDER BY s.sort_order, s.menu_id',
     );
     return [
       for (final r in rows)

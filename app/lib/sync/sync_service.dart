@@ -78,16 +78,53 @@ class SyncService {
     return rows.isEmpty ? 0 : rows.first['last_version'] as int;
   }
 
-  Future<int> pullCatalog() async {
+  /// Pull every page of the catalog delta and return the new watermark.
+  ///
+  /// The watermark advances **only** when the server says there is nothing
+  /// more. Storing it after a partial pull would permanently skip whatever
+  /// was not fetched, and that surfaces weeks later as "that item isn't on
+  /// the till". Re-pulling rows the device already has is free: every apply
+  /// is an upsert on a business key.
+  ///
+  /// A page cap exists because a bug on either side that kept returning a
+  /// cursor would otherwise loop forever on a tablet in a restaurant.
+  Future<int> pullCatalog({int maxPages = 200}) async {
     final since = catalogWatermark();
-    final body = await api.getCatalog(since: since);
-    applyCatalog(body);
-    return body['version'] as int;
+    String? cursor;
+    var pages = 0;
+
+    while (true) {
+      final body = await api.getCatalog(since: since, cursor: cursor);
+      // Each page is applied as it arrives, so a large first sync does not
+      // have to be held in memory in one piece.
+      applyCatalog(body, advanceWatermark: body['has_more'] != true);
+
+      if (body['has_more'] != true) {
+        return body['version'] as int;
+      }
+
+      cursor = body['next_cursor'] as String?;
+      if (cursor == null) {
+        throw StateError(
+          'backend reported more catalog pages but sent no cursor',
+        );
+      }
+      if (++pages >= maxPages) {
+        throw StateError(
+          'catalog paging did not finish after $maxPages pages; '
+          'refusing to loop',
+        );
+      }
+    }
   }
 
   /// Apply one catalog response. Idempotent: upserts on business keys, the
   /// same ones the migration loader uses.
-  void applyCatalog(Map<String, dynamic> body) {
+  ///
+  /// [advanceWatermark] is false for every page but the last: see
+  /// [pullCatalog].
+  void applyCatalog(Map<String, dynamic> body,
+      {bool advanceWatermark = true}) {
     final raw = db.raw;
     raw.execute('BEGIN');
     try {
@@ -269,14 +306,16 @@ class SyncService {
         );
       }
 
-      raw.execute(
-        "INSERT INTO sync_state (table_name, last_version, last_pulled_at) "
-        "VALUES ('catalog', ?, ?) "
-        'ON CONFLICT(table_name) DO UPDATE SET '
-        '  last_version=excluded.last_version, '
-        '  last_pulled_at=excluded.last_pulled_at',
-        [body['version'], DateTime.now().toUtc().toIso8601String()],
-      );
+      if (advanceWatermark) {
+        raw.execute(
+          "INSERT INTO sync_state (table_name, last_version, last_pulled_at) "
+          "VALUES ('catalog', ?, ?) "
+          'ON CONFLICT(table_name) DO UPDATE SET '
+          '  last_version=excluded.last_version, '
+          '  last_pulled_at=excluded.last_pulled_at',
+          [body['version'], DateTime.now().toUtc().toIso8601String()],
+        );
+      }
 
       raw.execute('COMMIT');
     } catch (_) {

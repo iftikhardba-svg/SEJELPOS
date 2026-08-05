@@ -128,6 +128,14 @@ class KitchenStationOut(CatalogItem):
 class CatalogResponse(BaseModel):
     version: int = Field(description="Watermark to send as ?since= next time")
     has_more: bool = False
+    next_cursor: str | None = Field(
+        default=None,
+        description=(
+            "Opaque position to send as ?cursor= for the next page. Present "
+            "exactly when has_more is true. Do NOT advance the stored "
+            "watermark until a page comes back with has_more false."
+        ),
+    )
     products: list[ProductOut] = []
     menu_screens: list[MenuScreenOut] = []
     menu_buttons: list[MenuButtonOut] = []

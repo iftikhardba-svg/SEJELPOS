@@ -122,11 +122,17 @@ class SyncApi {
 
   /// Incremental catalog pull. `since` is the watermark from the previous
   /// response; 0 means everything.
-  Future<Map<String, dynamic>> getCatalog({required int since}) async {
-    final r = await _client.get(
-      _u('/catalog?since=$since'),
-      headers: _headers(),
-    );
+  /// One page of the catalog delta. [cursor] comes from the previous page's
+  /// `next_cursor` and is opaque — its shape is the backend's business.
+  Future<Map<String, dynamic>> getCatalog({
+    required int since,
+    String? cursor,
+  }) async {
+    final query = StringBuffer('/catalog?since=$since');
+    if (cursor != null) {
+      query.write('&cursor=${Uri.encodeQueryComponent(cursor)}');
+    }
+    final r = await _client.get(_u(query.toString()), headers: _headers());
     return _decode(r);
   }
 
