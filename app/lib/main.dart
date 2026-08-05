@@ -19,12 +19,22 @@ import 'ui/cds_screen.dart';
 import 'ui/enrol_screen.dart';
 import 'ui/kds_screen.dart';
 import 'ui/till_screen.dart';
+import 'zatca/device_signer.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final schema = await rootBundle.loadString('assets/schema.sql');
   final dir = await getApplicationSupportDirectory();
-  final db = PosDatabase.openFile(p.join(dir.path, 'pos.db'), schema);
+  final db = PosDatabase.openFile(
+    p.join(dir.path, 'pos.db'),
+    schema,
+    // Without a signer wired here the whole ZATCA path is dead code in the
+    // real app: sales complete, receipts print UNSIGNED, and the backend
+    // refuses every push. FileKeyProvider returns null until the device has
+    // been through CSID onboarding, which is exactly the "cannot sign yet"
+    // state the till is built to survive.
+    signer: DeviceSigner(keys: FileKeyProvider(dir.path)),
+  );
   runApp(PosApp(db: db));
 }
 

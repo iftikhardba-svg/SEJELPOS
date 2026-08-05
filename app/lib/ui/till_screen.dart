@@ -17,6 +17,7 @@ import '../data/pos_database.dart';
 import '../printing/escpos.dart';
 import '../printing/printer.dart';
 import '../sync/sync_worker.dart';
+import 'setup_screen.dart';
 
 class TillScreen extends StatefulWidget {
   const TillScreen({
@@ -236,6 +237,18 @@ class _TillScreenState extends State<TillScreen> {
                       .textTheme
                       .titleMedium
                       ?.copyWith(fontWeight: FontWeight.bold)),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Device setup',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => SetupScreen(
+                  db: widget.db,
+                  sendBytes: widget.sendBytes,
+                ),
+              ),
             ),
           ),
         ],

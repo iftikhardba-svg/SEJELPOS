@@ -14,6 +14,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:sqlite3/sqlite3.dart';
@@ -45,6 +46,35 @@ class InMemoryKeyProvider implements ZatcaKeyProvider {
 
   @override
   String? privatePemFor(String deviceUuid) => _pem;
+}
+
+/// Reads the key from a PEM file in the app's private directory.
+///
+/// ⚠️  **Not the production implementation.** The file is plaintext: anyone
+/// with filesystem access to a rooted device can lift the signing key and
+/// issue invoices as this seller. The production version encrypts it at rest
+/// under a Keystore-held AES key (see the key-custody note above) — this
+/// exists so the app has a working key path before that lands, and so the
+/// "device cannot sign yet" state is a real, exercised code path rather than
+/// a hypothetical one.
+///
+/// No file means no key, which means unsigned receipts — the correct state
+/// for a device that has not been through CSID onboarding.
+class FileKeyProvider implements ZatcaKeyProvider {
+  FileKeyProvider(this.directory, {this.fileName = 'zatca_key.pem'});
+
+  final String directory;
+  final String fileName;
+
+  String get path => '$directory${Platform.pathSeparator}$fileName';
+
+  @override
+  String? privatePemFor(String deviceUuid) {
+    final file = File(path);
+    if (!file.existsSync()) return null;
+    final pem = file.readAsStringSync().trim();
+    return pem.isEmpty ? null : pem;
+  }
 }
 
 /// What a stamped sale carries onto the receipt and into the outbox.
