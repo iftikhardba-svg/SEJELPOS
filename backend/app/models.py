@@ -311,6 +311,121 @@ class ReportCategory(Base):
     server_version: Mapped[int] = mapped_column(BigInteger, index=True)
 
 
+class Question(Base):
+    """A meal-deal prompt: "1 DRINKS", "TABAKAT 6 GRILL".
+
+    A product can ask up to five of these, and each offers choices that are
+    themselves products. 91 imported products ask at least one. Without them a
+    meal rings with nothing chosen and the kitchen is told to make an empty
+    box, so this is not a nicety — it is what makes those items sellable.
+    """
+
+    __tablename__ = "question"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "company_id", "question_no"),
+        Index("ix_question_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("company.id"), nullable=True
+    )
+    question_no: Mapped[int] = mapped_column(Integer)
+    prompt: Mapped[str] = mapped_column(Text)
+    prompt_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Whether the sale can proceed without an answer.
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    # How many to pick. Usually one; the Tabakat platters ask for six.
+    pick_count: Mapped[int] = mapped_column(Integer, default=1, server_default=sa_text("1"))
+    # Whether the same choice may be picked more than once.
+    allow_repeats: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    free_choices: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
+class QuestionChoice(Base):
+    """One answer to a [Question] — itself a product."""
+
+    __tablename__ = "question_choice"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "question_no", "prodnum"),
+        Index("ix_question_choice_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("company.id"), nullable=True
+    )
+    question_no: Mapped[int] = mapped_column(Integer)
+    prodnum: Mapped[int] = mapped_column(Integer)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
+    # 0 in every imported row: the choice is included, not charged. Kept so a
+    # customer who starts charging for upgrades has somewhere to put it.
+    price_mode: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
+    fixed_price: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    default_qty: Mapped[int] = mapped_column(Integer, default=1, server_default=sa_text("1"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
+class ProductQuestion(Base):
+    """Which prompts a product asks, and in what order.
+
+    A join rather than five columns on Product: the slots are ordered and
+    sparse, and "question 3 of this product" is not a property of the product
+    so much as a position in a list.
+    """
+
+    __tablename__ = "product_question"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "prodnum", "slot"),
+        Index("ix_product_question_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    prodnum: Mapped[int] = mapped_column(Integer, index=True)
+    question_no: Mapped[int] = mapped_column(Integer)
+    # 1-5, the order the prompts are asked in.
+    slot: Mapped[int] = mapped_column(Integer)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
+class ComboItem(Base):
+    """Something a combo always includes, with nothing to choose.
+
+    "Bucket BROSTED Regular" comes with a litre, a garlic and a hummos. The
+    customer is not asked; the kitchen still has to be told.
+    """
+
+    __tablename__ = "combo_item"
+    __table_args__ = (
+        Index("ix_combo_item_parent", "tenant_id", "parent_prodnum"),
+        Index("ix_combo_item_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("company.id"), nullable=True
+    )
+    parent_prodnum: Mapped[int] = mapped_column(Integer)
+    prodnum: Mapped[int] = mapped_column(Integer)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
+    price_mode: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
+    fixed_price: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    print_it: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
 class Menu(Base):
     """A whole menu — the level above order pages.
 

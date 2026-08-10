@@ -160,6 +160,66 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
                 await s.flush()
                 return made
 
+            counts["questions"] = await upsert(
+                m.Question, data.get("questions", []), ["question_no"], {
+                    "company_id": lambda r: cid,
+                    "question_no": lambda r: _int(r["question_no"]),
+                    "prompt": lambda r: r["prompt"],
+                    "prompt_ar": lambda r: r.get("prompt_ar"),
+                    "is_required": lambda r: _bool(r.get("is_required"), True),
+                    "pick_count": lambda r: _int(r.get("pick_count"), 1),
+                    "allow_repeats": lambda r: _bool(r.get("allow_repeats")),
+                    "free_choices": lambda r: _int(r.get("free_choices")),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
+            counts["question_choices"] = await upsert(
+                m.QuestionChoice, data.get("question_choices", []),
+                ["question_no", "prodnum"], {
+                    "company_id": lambda r: cid,
+                    "question_no": lambda r: _int(r["question_no"]),
+                    "prodnum": lambda r: _int(r["prodnum"]),
+                    "sort_order": lambda r: _int(r.get("sort_order")),
+                    "price_mode": lambda r: _int(r.get("price_mode")),
+                    "fixed_price": lambda r: r.get("fixed_price"),
+                    "default_qty": lambda r: _int(r.get("default_qty"), 1),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
+            # Which prompts each product asks, flattened from the five slots.
+            product_questions = [
+                {"prodnum": p["prodnum"], "question_no": q, "slot": i + 1}
+                for p in data["products"]
+                for i, q in enumerate(p.get("questions") or [])
+            ]
+            counts["product_questions"] = await upsert(
+                m.ProductQuestion, product_questions, ["prodnum", "slot"], {
+                    "prodnum": lambda r: _int(r["prodnum"]),
+                    "question_no": lambda r: _int(r["question_no"]),
+                    "slot": lambda r: _int(r["slot"]),
+                    "is_deleted": lambda r: False,
+                    "server_version": lambda r: version,
+                })
+
+            counts["combo_items"] = await upsert(
+                m.ComboItem, data.get("combo_items", []),
+                ["parent_prodnum", "prodnum", "sort_order"], {
+                    "company_id": lambda r: cid,
+                    "parent_prodnum": lambda r: _int(r["parent_prodnum"]),
+                    "prodnum": lambda r: _int(r["prodnum"]),
+                    "sort_order": lambda r: _int(r.get("sort_order")),
+                    "price_mode": lambda r: _int(r.get("price_mode")),
+                    "fixed_price": lambda r: r.get("fixed_price"),
+                    "print_it": lambda r: _bool(r.get("print_it"), True),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
             counts["menus"] = await upsert(
                 m.Menu, data.get("menus", []), ["menu_no"], {
                     "branch_id": lambda r: bid,

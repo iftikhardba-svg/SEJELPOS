@@ -497,7 +497,7 @@ async function renderDashboard() {
 // table with inline price boxes stops being navigable.
 let productSearch = '', zeroOnly = false, categoryFilter = '';
 let selectedProductId = null;
-let categories = [], stations = [];
+let categories = [], stations = [], questions = [];
 
 const TIERS = 'abcdefghij'.split('');
 // Which tier a sale type charges is configured per type; A and B are the two
@@ -512,6 +512,9 @@ async function renderProducts() {
     }
     if (!stations.length) {
       try { stations = await api('/kitchen-stations'); } catch { stations = []; }
+    }
+    if (!questions.length) {
+      try { questions = await api('/questions'); } catch { questions = []; }
     }
 
     const qs = new URLSearchParams();
@@ -626,7 +629,8 @@ async function openProduct(id) {
     p = { prodnum: '', descript: '', descript_ar: '', print_des: '',
           price_a: 0, tax_applies: true, is_weighed: false,
           manual_price: false, is_modifier: false, is_active: true,
-          print_loc: 0, ref_code: '', unit_des: '', menu_ids: [] };
+          print_loc: 0, ref_code: '', unit_des: '', menu_ids: [],
+          question_nos: [] };
     for (const t of TIERS) if (p['price_' + t] == null) p['price_' + t] = null;
   }
 
@@ -724,6 +728,33 @@ async function openProduct(id) {
   form.append(el('p', { className: 'hint', textContent:
     'Station numbers are the printer ports carried over from the old system, ' +
     'so imported routing keeps working. Nothing ticked means no kitchen ticket.' }));
+
+  // ---- forced questions ----
+  // PixelPoint's five ordered slots. A prompt asks the cashier to choose
+  // something that comes with the item — "1 DRINKS", "Bread Selection" — and
+  // the choice is rung and sent to the kitchen with the meal.
+  form.append(el('h3', { className: 'sub-head', textContent: 'Forced questions' }));
+  const qSlots = [];
+  const qBox = el('div');
+  for (let slot = 0; slot < 5; slot++) {
+    const sel = el('select', { ariaLabel: 'Question ' + (slot + 1) });
+    sel.append(el('option', { value: '', textContent: 'NO QUESTION' }));
+    for (const q of questions) {
+      const pick = q.pick_count > 1 ? ` — pick ${q.pick_count}` : '';
+      sel.append(el('option', {
+        value: String(q.question_no),
+        textContent: `${q.prompt}${pick}  (${q.choices.length} choices)`,
+        selected: p.question_nos[slot] === q.question_no,
+      }));
+    }
+    qSlots.push(sel);
+    qBox.append(el('div', { style: 'margin-bottom:8px' }, sel));
+  }
+  form.append(qBox);
+  form.append(el('p', { className: 'hint', textContent:
+    'Asked in this order when the item is rung. Leave a slot on NO QUESTION '
+    + 'to skip it. A prompt with no choices configured cannot be answered, so '
+    + 'the till would stall on it.' }));
 
   // ---- till button ----
   form.append(el('h3', { className: 'sub-head', textContent: 'Till button' }));
@@ -860,6 +891,16 @@ async function openProduct(id) {
     for (const key of ['is_active', 'tax_applies', 'is_weighed',
                        'manual_price', 'is_modifier']) {
       put(key, fields[key].checked);
+    }
+
+    // Sent whole, in slot order, skipping the empty ones — the API replaces
+    // the list rather than patching a slot at a time.
+    const chosen = qSlots.map(s => s.value).filter(Boolean).map(Number);
+    if (new Set(chosen).size !== chosen.length) {
+      return toast('The same question cannot be asked twice for one item');
+    }
+    if (isNew || chosen.join(',') !== p.question_nos.join(',')) {
+      body.question_nos = chosen;
     }
 
     put('button_text', fields.button_text.value.trim() || null);

@@ -29,6 +29,7 @@ from ..db import SessionLocal, tenant_session
 from ..models import (
     BackOfficeUser,
     Branch,
+    ComboItem,
     Company,
     Device,
     EnrolmentCode,
@@ -38,6 +39,9 @@ from ..models import (
     MenuPage,
     MenuScreen,
     Product,
+    ProductQuestion,
+    Question,
+    QuestionChoice,
     ReportCategory,
     Sale,
     SalesType,
@@ -67,6 +71,7 @@ from ..schemas import (
     OfficeProductCreate,
     OfficeProductOut,
     OfficeProductUpdate,
+    OfficeQuestionOut,
     OfficeSaleOut,
 )
 
@@ -93,7 +98,8 @@ async def _next_catalog_version(session, tenant_id: uuid.UUID) -> int:
     """
     highest = 0
     for model in (Product, MenuScreen, SalesType, ReportCategory, Menu,
-                  MenuPage, MenuButton):
+                  MenuPage, MenuButton, Question, QuestionChoice,
+                  ProductQuestion, ComboItem):
         value = (
             await session.execute(
                 select(func.max(model.server_version)).where(
@@ -303,7 +309,71 @@ async def dashboard(
 # Products and prices
 # --------------------------------------------------------------------------
 
-def _product_out(p: Product, menu_ids: list[int] | None = None) -> OfficeProductOut:
+@router.get("/questions", response_model=list[OfficeQuestionOut])
+async def list_questions(ctx: OfficeContext = OfficeDep) -> list[OfficeQuestionOut]:
+    """The meal-deal prompts, with their choices and how many items ask them."""
+    async with tenant_session(ctx.tenant_id) as session:
+        questions = list(
+            (await session.execute(
+                select(Question)
+                .where(Question.tenant_id == ctx.tenant_id,
+                       Question.is_deleted.is_(False))
+                .order_by(Question.prompt)
+            )).scalars().all()
+        )
+
+        choices = (
+            await session.execute(
+                select(QuestionChoice, Product.descript, Product.price_a)
+                .join(
+                    Product,
+                    (Product.prodnum == QuestionChoice.prodnum)
+                    & (Product.tenant_id == QuestionChoice.tenant_id),
+                    isouter=True,
+                )
+                .where(QuestionChoice.tenant_id == ctx.tenant_id,
+                       QuestionChoice.is_deleted.is_(False))
+                .order_by(QuestionChoice.question_no, QuestionChoice.sort_order)
+            )
+        ).all()
+
+        used = dict(
+            (
+                await session.execute(
+                    select(ProductQuestion.question_no,
+                           func.count(ProductQuestion.id))
+                    .where(ProductQuestion.tenant_id == ctx.tenant_id,
+                           ProductQuestion.is_deleted.is_(False))
+                    .group_by(ProductQuestion.question_no)
+                )
+            ).all()
+        )
+
+    by_question: dict[int, list[dict]] = {}
+    for choice, descript, price in choices:
+        by_question.setdefault(choice.question_no, []).append({
+            "prodnum": choice.prodnum,
+            "name": descript or f"(missing product {choice.prodnum})",
+            "price_a": price or 0,
+        })
+
+    return [
+        OfficeQuestionOut(
+            question_no=q.question_no,
+            prompt=q.prompt,
+            is_required=q.is_required,
+            pick_count=q.pick_count,
+            allow_repeats=q.allow_repeats,
+            is_active=q.is_active,
+            choices=by_question.get(q.question_no, []),
+            used_by=used.get(q.question_no, 0),
+        )
+        for q in questions
+    ]
+
+
+def _product_out(p: Product, menu_ids: list[int] | None = None,
+                 question_nos: list[int] | None = None) -> OfficeProductOut:
     return OfficeProductOut(
         id=p.id,
         prodnum=p.prodnum,
@@ -325,6 +395,7 @@ def _product_out(p: Product, menu_ids: list[int] | None = None) -> OfficeProduct
         back_color=p.back_color,
         server_version=p.server_version,
         menu_ids=menu_ids or [],
+        question_nos=question_nos or [],
         **{f"price_{t}": getattr(p, f"price_{t}") for t in PRICE_TIERS},
     )
 
@@ -461,8 +532,21 @@ async def get_product(
                 )
             ).scalars().all()
         )
+        question_nos = list(
+            (
+                await session.execute(
+                    select(ProductQuestion.question_no)
+                    .where(
+                        ProductQuestion.tenant_id == ctx.tenant_id,
+                        ProductQuestion.prodnum == product.prodnum,
+                        ProductQuestion.is_deleted.is_(False),
+                    )
+                    .order_by(ProductQuestion.slot)
+                )
+            ).scalars().all()
+        )
 
-    return _product_out(product, menu_ids)
+    return _product_out(product, menu_ids, question_nos)
 
 
 @router.post("/products", response_model=OfficeProductOut, status_code=201)
@@ -537,8 +621,69 @@ async def update_product(
         if not fields:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "nothing to change")
 
+        # The prompt list is replaced wholesale: five ordered slots have no
+        # sensible partial update, and re-slotting them one at a time would
+        # let a save land with two prompts in slot 2.
+        question_nos = fields.pop("question_nos", None)
         for key, value in fields.items():
             setattr(product, key, value)
+
+        if question_nos is not None:
+            known = set(
+                (
+                    await session.execute(
+                        select(Question.question_no).where(
+                            Question.tenant_id == ctx.tenant_id,
+                            Question.is_deleted.is_(False),
+                        )
+                    )
+                ).scalars().all()
+            )
+            unknown = [q for q in question_nos if q not in known]
+            if unknown:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"no such prompt: {', '.join(str(q) for q in unknown)}",
+                )
+            if len(set(question_nos)) != len(question_nos):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "the same prompt cannot be asked twice for one item",
+                )
+
+            existing = list(
+                (
+                    await session.execute(
+                        select(ProductQuestion).where(
+                            ProductQuestion.tenant_id == ctx.tenant_id,
+                            ProductQuestion.prodnum == product.prodnum,
+                        )
+                    )
+                ).scalars().all()
+            )
+            by_slot = {row.slot: row for row in existing}
+            for slot in range(1, 6):
+                row = by_slot.get(slot)
+                wanted = (
+                    question_nos[slot - 1] if slot <= len(question_nos) else None
+                )
+                if wanted is None:
+                    if row is not None and not row.is_deleted:
+                        # Tombstoned, not removed: a device learns a prompt is
+                        # gone by seeing the row deleted.
+                        row.is_deleted = True
+                        row.server_version = 0
+                elif row is None:
+                    session.add(ProductQuestion(
+                        tenant_id=ctx.tenant_id,
+                        prodnum=product.prodnum,
+                        question_no=wanted,
+                        slot=slot,
+                        server_version=0,
+                    ))
+                else:
+                    row.question_no = wanted
+                    row.is_deleted = False
 
         aggregator_exists = (
             await session.execute(
@@ -564,9 +709,38 @@ async def update_product(
             )
 
         # Without this the edit is invisible to every till already in the field.
-        product.server_version = await _next_catalog_version(session, ctx.tenant_id)
+        version = await _next_catalog_version(session, ctx.tenant_id)
+        product.server_version = version
         await session.flush()
-        return _product_out(product)
+
+        # Stamp the prompt rows with the same version, including the ones just
+        # created, so a device pulls the product and its prompts together.
+        for row in (
+            await session.execute(
+                select(ProductQuestion).where(
+                    ProductQuestion.tenant_id == ctx.tenant_id,
+                    ProductQuestion.prodnum == product.prodnum,
+                    ProductQuestion.server_version == 0,
+                )
+            )
+        ).scalars():
+            row.server_version = version
+        await session.flush()
+
+        current = list(
+            (
+                await session.execute(
+                    select(ProductQuestion.question_no)
+                    .where(
+                        ProductQuestion.tenant_id == ctx.tenant_id,
+                        ProductQuestion.prodnum == product.prodnum,
+                        ProductQuestion.is_deleted.is_(False),
+                    )
+                    .order_by(ProductQuestion.slot)
+                )
+            ).scalars().all()
+        )
+        return _product_out(product, question_nos=current)
 
 
 # --------------------------------------------------------------------------

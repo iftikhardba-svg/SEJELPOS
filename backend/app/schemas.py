@@ -599,6 +599,9 @@ class OfficeProductOut(BaseModel):
     # Which menu screens this product sits on. Read-only here - moving
     # buttons around is a menu-layout job, not a product one.
     menu_ids: list[int] = Field(default_factory=list)
+    # The meal-deal prompts this item asks, in the order they are asked.
+    # PixelPoint's five "Forced Questions" slots.
+    question_nos: list[int] = Field(default_factory=list)
 
 
 class OfficeProductUpdate(BaseModel):
@@ -637,6 +640,9 @@ class OfficeProductUpdate(BaseModel):
     # a till and render as nothing.
     fore_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     back_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    # The prompts this item asks, in order. Replaces the whole list when
+    # present — five ordered slots have no sensible partial update.
+    question_nos: list[int] | None = Field(default=None, max_length=5)
 
 
 class OfficeProductCreate(BaseModel):
@@ -670,6 +676,19 @@ class OfficeProductCreate(BaseModel):
 # An order page is a grid of buttons. The imported layout puts every button at
 # a real (x, y) — staff reach for position before they read the label — so the
 # editor works in grid coordinates rather than a list order.
+
+class OfficeQuestionOut(BaseModel):
+    """A meal-deal prompt, with what it offers."""
+
+    question_no: int
+    prompt: str
+    is_required: bool
+    pick_count: int
+    allow_repeats: bool
+    is_active: bool
+    choices: list[dict] = Field(default_factory=list)
+    used_by: int = 0
+
 
 class OfficeMenuOut(BaseModel):
     """A whole menu: the grid of page tiles a till lands on."""

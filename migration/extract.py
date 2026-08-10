@@ -93,6 +93,8 @@ SELECT PRODNUM, DESCRIPT, PRINTDES, PrintDes2, REFCODE, UnitDes,
        -- distinct backgrounds — and that colour is how a cashier finds an item
        -- without reading it.
        BUTTON1, BUTTON2, BUTTON3, FORCOLOR, BACKCOLOR,
+       -- Up to five meal-deal prompts, in the order they are asked.
+       QUESTION1, QUESTION2, QUESTION3, QUESTION4, QUESTION5,
        -- Hot or cold. Set on 290 products; the kitchen cares.
        PrepTemp
 FROM DBA.Product
@@ -143,6 +145,34 @@ FROM DBA.OrderCat
 Q_MENUS = """
 SELECT MENUINDEX, DESCRIPT, ISACTIVE, RevCenter
 FROM DBA.MultiMenuNames
+"""
+
+# Meal deals. A product can carry up to five questions ("1 DRINKS", "TABAKAT
+# 6 GRILL"); each offers choices that are themselves products. 85 products use
+# one. Without this a meal rings with no drink chosen and the kitchen has no
+# idea what to make.
+#
+# FORCED 0 = optional, 1 = must answer. NUMCHOICE is how many to pick,
+# AllowMulti whether the same choice can be picked twice.
+Q_QUESTIONS = """
+SELECT OPTIONINDEX, QUESTION, Descript, FORCED, NUMCHOICE, AllowMulti,
+       FreeChoices, ISACTIVE
+FROM DBA.Questions
+WHERE OPTIONINDEX > 0
+"""
+
+Q_QUESTION_CHOICES = """
+SELECT UNIQUEID, OPTIONINDEX, CHOICE, Sequence, PriceMode, FixedPrice,
+       DefQuan, IsActive
+FROM DBA.ForcedChoices
+"""
+
+# Items included in a combo without being asked about — "Bucket BROSTED"
+# always comes with a litre, a garlic and a hummos. ProdLinkNum is the parent.
+Q_COMBO_ITEMS = """
+SELECT ProductComboID, ProdLinkNum, ProdNum, OptionIndex, Sequence,
+       ReqItem, PriceMode, FixedPrice, PrintIt, IsActive
+FROM DBA.ProductCombo
 """
 
 Q_MENU_BUTTONS = """
@@ -214,6 +244,9 @@ def extract(con) -> dict:
         "products": rows(con, Q_PRODUCTS),
         "report_categories": rows(con, Q_REPORT_CATEGORIES),
         "menus": rows(con, Q_MENUS),
+        "questions": rows(con, Q_QUESTIONS),
+        "question_choices": rows(con, Q_QUESTION_CHOICES),
+        "combo_items": rows(con, Q_COMBO_ITEMS),
         "categories": rows(con, Q_CATEGORIES),
         "menu_buttons": rows(con, Q_MENU_BUTTONS),
         "category_positions": rows(con, Q_CATEGORY_POSITIONS),

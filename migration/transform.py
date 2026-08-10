@@ -1,9 +1,9 @@
-"""Transform extracted PixelPoint data into the new POS schema.
+﻿"""Transform extracted PixelPoint data into the new POS schema.
 
     python transform.py --in extracted.json --out transformed.json \
         --tenant <uuid> --company <uuid> --branch <uuid>
 
-Runs on any Python — no database driver needed.
+Runs on any Python â€” no database driver needed.
 
 Two things here are deliberate and worth knowing before changing them:
 
@@ -33,7 +33,7 @@ MODIFIER_CATEGORY_HINTS = ("hold", "extra", "modify", "modifier")
 
 # PixelPoint product type for kitchen comment/instruction buttons
 # ('BBQ COMMENTS', 'SALAD COMMENTS'). They sit on ordinary menu screens and are
-# always zero-priced, but they are never sold — treating them as products would
+# always zero-priced, but they are never sold â€” treating them as products would
 # put unpriced junk in the sellable catalogue.
 COMMENT_PRODTYPE = 12
 
@@ -54,13 +54,13 @@ def truthy(v) -> bool:
 def tcolor_to_hex(value) -> str | None:
     """Delphi TColor -> '#RRGGBB'.
 
-    PixelPoint is a Delphi application, so colours are stored as $00BBGGRR —
+    PixelPoint is a Delphi application, so colours are stored as $00BBGGRR â€”
     the byte order is the reverse of what everyone expects, and reading it as
     RGB turns their pink buttons blue.
 
     Negative values are Windows *system* colours (clWindowText and friends)
-    rather than literal ones. There is no honest fixed translation for those —
-    they mean "whatever the OS theme says" — so they become None and the till
+    rather than literal ones. There is no honest fixed translation for those â€”
+    they mean "whatever the OS theme says" â€” so they become None and the till
     falls back to its own theme, which is the same intent.
     """
     if value is None:
@@ -104,7 +104,7 @@ def derive_vat_percent(tax_sample: list[dict]) -> Decimal | None:
     if not rates:
         return None
     rates.sort()
-    return rates[len(rates) // 2]  # median — robust against rounding outliers
+    return rates[len(rates) // 2]  # median â€” robust against rounding outliers
 
 
 def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dict:
@@ -119,7 +119,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
     elif abs(vat - Decimal("15.00")) > Decimal("0.10"):
         warnings.append(
             f"Derived VAT rate is {vat}%, not the expected 15%. "
-            "Verify before going live — every price depends on this."
+            "Verify before going live â€” every price depends on this."
         )
 
     # ---- categories -> menu screens --------------------------------------
@@ -152,7 +152,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
 
     # ---- menus, and which pages sit where on them -------------------------
     # The level above order pages. "Default Menu" is the grid of coloured page
-    # tiles a cashier lands on — Shawarma, Grill, Appetizer and the rest — and
+    # tiles a cashier lands on â€” Shawarma, Grill, Appetizer and the rest â€” and
     # it is how they get anywhere. Without it a till can only offer a flat
     # list of all 57 pages, which is not the menu anyone learned.
     menus = []
@@ -175,7 +175,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
     # A page can have SEVERAL rows on one menu: PixelPoint leaves the old
     # placement behind with ISACTIVE = 0 when a tile is moved. Shawarma has
     # one at (1,1) live and one at (1,8) dead. Carrying both and letting the
-    # last win rebuilt the menu from its own history — the grid came out as
+    # last win rebuilt the menu from its own history â€” the grid came out as
     # the layout nobody uses. Only the live placement is the tile.
     menu_pages = []
     seen: dict[tuple[int, int], dict] = {}
@@ -239,7 +239,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         prod_cats.setdefault(b["PRODNUM"], set()).add(b["ORDERCAT"])
 
     # ---- report categories -----------------------------------------------
-    # PixelPoint's "Report Cat" — what every sales report groups by, and the
+    # PixelPoint's "Report Cat" â€” what every sales report groups by, and the
     # only real organising idea the menu has. Product.REPORTNO points here.
     report_categories = []
     known_report_nos = set()
@@ -272,7 +272,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         price_a = to_halalas(p["PRICEA"])
         cats = prod_cats.get(num, set())
         # Modifier if it only ever appears on modifier screens, or if PixelPoint
-        # types it as a comment button. Price alone is not enough to decide —
+        # types it as a comment button. Price alone is not enough to decide â€”
         # some genuine items are legitimately open-priced.
         is_comment = p["PRODTYPE"] == COMMENT_PRODTYPE
         is_modifier = is_comment or (bool(cats) and cats.issubset(modifier_cats))
@@ -287,7 +287,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "branch_id": branch_id,
             "prodnum": num,
             "descript": (p["DESCRIPT"] or "").strip() or f"Product {num}",
-            "descript_ar": None,       # absent in source — needed for ZATCA later
+            "descript_ar": None,       # absent in source â€” needed for ZATCA later
             "print_des": (p["PRINTDES"] or "").strip() or None,
             "price_a": price_a or 0,
             "price_b": to_halalas(p["PRICEB"]),
@@ -301,7 +301,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "price_j": to_halalas(p.get("PRICEJ")),
             # REPORTNO is the "Report Cat" a human sets on the product screen.
             # PRODTYPE is a different, near-empty column that was mistaken for
-            # it on the first pass — kept because it costs nothing, but it is
+            # it on the first pass â€” kept because it costs nothing, but it is
             # not the category.
             "report_no": p.get("REPORTNO")
             if p.get("REPORTNO") in known_report_nos else None,
@@ -312,6 +312,12 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "button_text": button_lines(p),
             "fore_color": tcolor_to_hex(p.get("FORCOLOR")),
             "back_color": tcolor_to_hex(p.get("BACKCOLOR")),
+            # The meal-deal prompts this item asks, in order. 0 means the
+            # slot is empty — PixelPoint's "NO QUESTION".
+            "questions": [
+                p.get(f"QUESTION{n}") for n in (1, 2, 3, 4, 5)
+                if (p.get(f"QUESTION{n}") or 0) > 0
+            ],
             # PrepTemp (the "Item Type: Hot / Cold / Use Report Cat." radio)
             # is deliberately NOT carried. In this data 290 products say "use
             # the report category" and all 28 categories say "none", so not a
@@ -342,18 +348,104 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         warnings.append(
             f"{len(orphan_products)} products sit on no menu screen and are "
             f"unreachable in the POS (e.g. {orphan_products[:5]}). They are "
-            "imported but staff cannot ring them up — most look like dead "
+            "imported but staff cannot ring them up â€” most look like dead "
             "catalogue entries and are candidates for deletion."
         )
 
-    # Products marked taxable=false deserve a look — under Saudi VAT almost
+    # Products marked taxable=false deserve a look â€” under Saudi VAT almost
     # everything a restaurant sells is standard-rated.
     exempt = [p["prodnum"] for p in products if not p["tax_applies"] and p["is_active"]]
     if exempt:
         warnings.append(
             f"{len(exempt)} active products are marked VAT-exempt "
-            f"(e.g. {exempt[:5]}). Confirm this is correct — Saudi VAT exemptions "
+            f"(e.g. {exempt[:5]}). Confirm this is correct â€” Saudi VAT exemptions "
             "are narrow."
+        )
+
+    # ---- meal-deal questions and their choices ---------------------------
+    # A product can ask up to five questions; each offers choices that are
+    # themselves products. 85 products use one, and without it a meal rings
+    # with nothing chosen and the kitchen is told to make an empty box.
+    questions = []
+    known_questions = set()
+    for q in src.get("questions", []):
+        option = q["OPTIONINDEX"]
+        known_questions.add(option)
+        questions.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
+            "question_no": option,
+            "prompt": (q["QUESTION"] or "").strip() or f"Question {option}",
+            "prompt_ar": None,
+            # FORCED 0 means the cashier may skip it. Anything else means it
+            # must be answered before the item can be rung.
+            "is_required": bool(q.get("FORCED")),
+            # How many to pick. NUMCHOICE 1 is the common case; the Tabakat
+            # platters ask for six.
+            "pick_count": q.get("NUMCHOICE") or 1,
+            "allow_repeats": truthy(q.get("AllowMulti")),
+            "free_choices": q.get("FreeChoices") or 0,
+            "is_active": truthy(q["ISACTIVE"]),
+            "is_deleted": False,
+        })
+
+    question_choices = []
+    for c in src.get("question_choices", []):
+        option = c.get("OPTIONINDEX")
+        choice = c.get("CHOICE")
+        if option not in known_questions or choice not in prod_by_num:
+            # A choice pointing at a question or product that no longer
+            # exists cannot be offered.
+            continue
+        question_choices.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
+            "question_no": option,
+            "prodnum": choice,
+            "sort_order": c.get("Sequence") or 0,
+            # PriceMode decides whether the choice adds to the bill; the
+            # imported data uses a fixed price of zero throughout, so a
+            # choice is included rather than charged.
+            "price_mode": c.get("PriceMode") or 0,
+            "fixed_price": to_halalas(c.get("FixedPrice")),
+            "default_qty": c.get("DefQuan") or 1,
+            "is_active": truthy(c["IsActive"]),
+            "is_deleted": False,
+        })
+
+    # Items a combo always includes, with nothing to choose.
+    combo_items = []
+    for c in src.get("combo_items", []):
+        parent = c.get("ProdLinkNum")
+        child = c.get("ProdNum")
+        if parent not in prod_by_num or child not in prod_by_num:
+            continue
+        combo_items.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
+            "parent_prodnum": parent,
+            "prodnum": child,
+            "sort_order": c.get("Sequence") or 0,
+            "price_mode": c.get("PriceMode") or 0,
+            "fixed_price": to_halalas(c.get("FixedPrice")),
+            "print_it": truthy(c.get("PrintIt")),
+            "is_active": truthy(c["IsActive"]),
+            "is_deleted": False,
+        })
+
+    orphan_questions = sum(
+        1 for p in src["products"]
+        for n in (1, 2, 3, 4, 5)
+        if (p.get(f"QUESTION{n}") or 0) > 0
+        and p.get(f"QUESTION{n}") not in known_questions
+    )
+    if orphan_questions:
+        warnings.append(
+            f"{orphan_questions} product question slots point at a question "
+            "that no longer exists; those prompts will not be asked."
         )
 
     # ---- menu buttons -----------------------------------------------------
@@ -397,7 +489,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         if is_cash and looks_like_card:
             warnings.append(
                 f"Payment method {m['METHODNUM']} '{name}' is flagged as cash in "
-                "PixelPoint but looks like a card. Verify — it affects drawer "
+                "PixelPoint but looks like a card. Verify â€” it affects drawer "
                 "behaviour and cash-up."
             )
         pay_methods.append({
@@ -437,13 +529,13 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "is_deleted": False,
         })
     warnings.append(
-        f"{len(staff)} staff imported without PINs — every one must have a PIN "
+        f"{len(staff)} staff imported without PINs â€” every one must have a PIN "
         "set before they can log in. The source had no usable credentials."
     )
 
     # ---- sale types -------------------------------------------------------
     # ForcePrice carries the price tier. Names identify the aggregators, because
-    # PixelPoint has no flag for "this order came from a third party" — and that
+    # PixelPoint has no flag for "this order came from a third party" â€” and that
     # distinction decides both the price charged and whether we demand the
     # platform's order reference.
     AGGREGATOR_NAMES = ("hunger", "keeta", "jahez", "marsool", "chefz",
@@ -482,7 +574,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         warnings.append(
             f"{len(unknown_tiers)} sale types have a ForcePrice this importer "
             f"does not recognise (e.g. {unknown_tiers[:3]}); they were given the "
-            "base price tier and must be checked — the wrong tier means the "
+            "base price tier and must be checked â€” the wrong tier means the "
             "wrong price on every order of that type."
         )
 
@@ -491,7 +583,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         warnings.append(
             f"{len(agg)} active sale types were detected as delivery aggregators "
             f"({', '.join(agg[:5])}) and will charge their configured price tier. "
-            "Confirm the list — a missed one is charged walk-in prices and loses "
+            "Confirm the list â€” a missed one is charged walk-in prices and loses "
             "the commission margin."
         )
 
@@ -514,7 +606,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
 
     if kitchen_stations:
         station_bits = {1 << s["station_no"] for s in kitchen_stations}
-        # bit 1 (value 2) is the local receipt printer — routed but not a station
+        # bit 1 (value 2) is the local receipt printer â€” routed but not a station
         known_mask = sum(station_bits) | 2
         stray = sorted({
             p["prodnum"] for p in products
@@ -617,6 +709,9 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         "vat_percent": str(vat),
         "menus": menus,
         "menu_pages": menu_pages,
+        "questions": questions,
+        "question_choices": question_choices,
+        "combo_items": combo_items,
         "menu_screens": menu_screens,
         "report_categories": report_categories,
         "products": products,
