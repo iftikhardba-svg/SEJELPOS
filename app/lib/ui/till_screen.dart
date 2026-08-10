@@ -133,19 +133,37 @@ class _TillScreenState extends State<TillScreen> {
     });
   }
 
-  void _charge(int methodnum, String methodName) {
+  Future<void> _charge(int methodnum, String methodName) async {
     if (_cart.isEmpty) return;
     if (_salesType.requiresExternalRef &&
         _refController.text.trim().isEmpty) {
       _toast('${_salesType.descript} orders need the aggregator order number');
       return;
     }
+
+    // Every sale records who rang it. Asked here rather than at boot so the
+    // cashier is chosen by the person actually standing at the till.
+    var empnum = widget.db.activeCashier();
+    if (empnum == null) {
+      final staff = widget.db.cashiers();
+      if (staff.length == 1) {
+        // Nothing to choose between. Asking would be a dialog whose only
+        // answer is already known.
+        empnum = staff.single.empnum;
+        widget.db.setActiveCashier(empnum);
+      } else {
+        empnum = await _pickCashier();
+        if (empnum == null) return; // cancelled
+      }
+    }
+
     final CompletedSale sale;
     try {
       sale = widget.db.completeSale(
         cart: List.of(_cart),
         salesType: _salesType,
         methodnum: methodnum,
+        empnum: empnum,
         externalRef: _salesType.requiresExternalRef
             ? _refController.text.trim()
             : null,
@@ -170,6 +188,8 @@ class _TillScreenState extends State<TillScreen> {
     unawaited(_printReceipt(sale, methodName, completedOrder));
     unawaited(widget.worker?.syncNow());
 
+    // The cashier picker above may have awaited, so the till could be gone.
+    if (!mounted) return;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -243,6 +263,48 @@ class _TillScreenState extends State<TillScreen> {
     }
   }
 
+  /// Choose who is on the till, and remember it on the device.
+  ///
+  /// Deliberately not a login: migrated staff arrive with `must_set_pin` and
+  /// no `pin_hash`, so there is nothing to check a PIN against yet. This
+  /// records who rang the sale; it does not prove it.
+  Future<int?> _pickCashier() async {
+    final staff = widget.db.cashiers();
+    if (staff.isEmpty) {
+      _toast('No staff have synced to this till yet');
+      return null;
+    }
+
+    final chosen = await showDialog<int>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Who is on this till?'),
+        children: [
+          for (final person in staff)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(person.empnum),
+              child: Text('${person.name}  ·  ${person.empnum}'),
+            ),
+        ],
+      ),
+    );
+
+    if (chosen != null) {
+      widget.db.setActiveCashier(chosen);
+      if (mounted) setState(() {});
+    }
+    return chosen;
+  }
+
+  String get _cashierLabel {
+    final empnum = widget.db.activeCashier();
+    if (empnum == null) return 'No cashier';
+    final person = widget.db
+        .cashiers()
+        .where((c) => c.empnum == empnum);
+    return person.isEmpty ? 'Cashier $empnum' : person.first.name;
+  }
+
   void _toast(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -269,6 +331,11 @@ class _TillScreenState extends State<TillScreen> {
                       .titleMedium
                       ?.copyWith(fontWeight: FontWeight.bold)),
             ),
+          ),
+          TextButton.icon(
+            icon: const Icon(Icons.person_outline),
+            label: Text(_cashierLabel),
+            onPressed: () => _pickCashier(),
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),

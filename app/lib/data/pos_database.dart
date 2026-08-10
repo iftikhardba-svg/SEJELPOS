@@ -18,6 +18,7 @@ import 'package:uuid/uuid.dart';
 import '../core/money.dart';
 import '../core/pricing.dart';
 import '../zatca/device_signer.dart';
+import 'schema_migrations.dart';
 
 const _uuid = Uuid();
 
@@ -107,11 +108,15 @@ class PosDatabase {
 
   /// Opens (or creates) the on-disk database at [path].
   ///
-  /// The schema runs only when the file is brand new — schema.sql is a
-  /// CREATE script, not a migration. `PRAGMA user_version` records which
-  /// schema built the file, so future tablet migrations have something to
-  /// key off. foreign_keys is per-connection in SQLite and must be switched
-  /// on at every open, not just at creation.
+  /// A brand new file gets `schema.sql`, which is a CREATE script. An
+  /// existing one gets migrated forward from whatever `PRAGMA user_version`
+  /// says built it — see [migrateTabletSchema]. Without that, every schema
+  /// change shipped in an update breaks every tablet already in service:
+  /// during development the file just gets deleted, and a restaurant cannot
+  /// do that to a till mid-shift.
+  ///
+  /// foreign_keys is per-connection in SQLite and must be switched on at
+  /// every open, not just at creation.
   factory PosDatabase.openFile(String path, String schemaSql,
       {DeviceSigner? signer}) {
     final db = sqlite3.open(path);
@@ -122,7 +127,9 @@ class PosDatabase {
         .isEmpty;
     if (fresh) {
       db.execute(schemaSql);
-      db.execute('PRAGMA user_version = 1');
+      db.execute('PRAGMA user_version = $tabletSchemaVersion');
+    } else {
+      migrateTabletSchema(db);
     }
     return PosDatabase(db, signer: signer);
   }
@@ -206,6 +213,32 @@ class PosDatabase {
         taxApplies: (r['tax_applies'] as int) != 0,
       );
 
+  /// Cashiers who can be put on this till, in the order a human scans a list.
+  List<({int empnum, String name})> cashiers() {
+    final rows = _db.select(
+      'SELECT empnum, name FROM employee '
+      'WHERE is_active = 1 AND is_deleted = 0 ORDER BY name, empnum',
+    );
+    return [
+      for (final r in rows)
+        (empnum: r['empnum'] as int, name: r['name'] as String),
+    ];
+  }
+
+  /// Who is on the till, or null if nobody has been chosen yet.
+  int? activeCashier() {
+    final rows = _db.select('SELECT active_empnum FROM device WHERE id = 1');
+    if (rows.isEmpty) return null;
+    return rows.first['active_empnum'] as int?;
+  }
+
+  void setActiveCashier(int? empnum) {
+    _db.execute(
+      'UPDATE device SET active_empnum = ? WHERE id = 1',
+      [empnum],
+    );
+  }
+
   /// station_no -> name, for routing lines off the PRINTLOC bitmask.
   Map<int, String> kitchenStations() {
     final rows = _db.select(
@@ -235,6 +268,21 @@ class PosDatabase {
   }) {
     if (cart.isEmpty) {
       throw StateError('an empty cart cannot be charged');
+    }
+    // A sale always has a cashier — emp_open is NOT NULL and a foreign key.
+    // Checked here so an unknown one reads as a cashier problem instead of
+    // surfacing as "SQLException 787" from deep inside the transaction. The
+    // demo catalog seeds empnum 0, which hid this until a real migrated
+    // catalog (staff 999, 2001-2012, no zero) reached a till.
+    final known = _db.select(
+      'SELECT 1 FROM employee WHERE empnum = ? AND is_active = 1',
+      [empnum],
+    );
+    if (known.isEmpty) {
+      throw StateError(
+        'no active cashier with number $empnum on this device — '
+        'choose who is on the till before charging',
+      );
     }
     if (salesType.requiresExternalRef &&
         (externalRef == null || externalRef.trim().isEmpty)) {

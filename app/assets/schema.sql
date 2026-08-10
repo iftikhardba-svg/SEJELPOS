@@ -49,6 +49,12 @@ CREATE TABLE device (
     -- Receipt printer on the LAN (ESC/POS over port 9100). Unset = no printing.
     printer_host    TEXT,
     printer_port    INTEGER NOT NULL DEFAULT 9100,
+    -- Who is on this till. Every sale records a cashier (sale.emp_open is NOT
+    -- NULL and a foreign key), so this must be set before anything can be
+    -- charged. NOT a login: migrated staff arrive with must_set_pin and no
+    -- pin_hash, so this identifies the cashier without yet authenticating
+    -- them. Until PINs are set, anyone at the till can select anyone.
+    active_empnum   INTEGER REFERENCES employee(empnum),
     -- ZATCA EGS identity. Only public material and metadata live here.
     --
     -- The private key is NOT in this database and NOT in the Android

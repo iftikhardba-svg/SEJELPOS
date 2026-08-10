@@ -44,6 +44,7 @@ CompletedSale chargeOneItem(
   double qty = 1,
   int saleTypeNo = 2025,
   int methodnum = 1010,
+  int empnum = 0,
 }) {
   final salesType = db.salesTypes().firstWhere((t) => t.no == saleTypeNo);
   final product = db
@@ -53,5 +54,6 @@ CompletedSale chargeOneItem(
     cart: [CartLine(product: product, qty: qty)],
     salesType: salesType,
     methodnum: methodnum,
+    empnum: empnum,
   );
 }
