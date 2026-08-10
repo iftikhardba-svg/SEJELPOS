@@ -181,6 +181,7 @@ async def _ingest_one(
                 tax_amount=ln.tax_amount,
                 line_total=ln.line_total,
                 seat_no=ln.seat_no,
+                parent_line=ln.parent_line,
                 voided=ln.voided,
             ))
 

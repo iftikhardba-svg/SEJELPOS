@@ -153,6 +153,48 @@ class KitchenStationOut(CatalogItem):
     is_active: bool
 
 
+class QuestionOut(CatalogItem):
+    """A prompt the till must ask before an item can be rung."""
+
+    question_no: int
+    prompt: str
+    prompt_ar: str | None = None
+    is_required: bool
+    pick_count: int
+    allow_repeats: bool
+    free_choices: int
+    is_active: bool
+
+
+class QuestionChoiceOut(CatalogItem):
+    id: uuid.UUID
+    question_no: int
+    prodnum: int
+    sort_order: int
+    price_mode: int
+    fixed_price: int | None = None
+    default_qty: int
+    is_active: bool
+
+
+class ProductQuestionOut(CatalogItem):
+    id: uuid.UUID
+    prodnum: int
+    question_no: int
+    slot: int
+
+
+class ComboItemOut(CatalogItem):
+    id: uuid.UUID
+    parent_prodnum: int
+    prodnum: int
+    sort_order: int
+    price_mode: int
+    fixed_price: int | None = None
+    print_it: bool
+    is_active: bool
+
+
 class CatalogResponse(BaseModel):
     version: int = Field(description="Watermark to send as ?since= next time")
     has_more: bool = False
@@ -174,6 +216,10 @@ class CatalogResponse(BaseModel):
     tax_rates: list[TaxRateOut] = []
     sales_types: list[SalesTypeOut] = []
     kitchen_stations: list[KitchenStationOut] = []
+    questions: list[QuestionOut] = []
+    question_choices: list[QuestionChoiceOut] = []
+    product_questions: list[ProductQuestionOut] = []
+    combo_items: list[ComboItemOut] = []
 
 
 # --------------------------------------------------------------------------
@@ -192,6 +238,11 @@ class SaleLineIn(BaseModel):
     tax_amount: int
     line_total: int
     seat_no: int | None = None
+    # The line this one hangs off: a drink chosen inside a meal, or an item the
+    # combo always includes. Nested rather than flat because a bill that lists
+    # "COCA COLA 0.00" beside the meal instead of under it cannot be read back
+    # as what was actually sold — and the kitchen groups the same way.
+    parent_line: uuid.UUID | None = None
     voided: bool = False
 
     @model_validator(mode="after")
@@ -274,6 +325,20 @@ class SaleIn(BaseModel):
         # holds is not compliant. Worth rejecting loudly.
         if self.status == "closed" and not self.zatca_qr:
             raise ValueError("closed sale has no ZATCA QR — receipt was not signed")
+
+        # A child line must hang off a line of THIS sale. Storing one that
+        # points elsewhere would produce a bill whose items cannot all be
+        # reached from it — the chosen drink would exist and belong to nothing.
+        own = {ln.line_uuid for ln in self.lines}
+        for ln in self.lines:
+            if ln.parent_line is None:
+                continue
+            if ln.parent_line not in own:
+                raise ValueError(
+                    f"line {ln.line_no} hangs off a line that is not in this sale"
+                )
+            if ln.parent_line == ln.line_uuid:
+                raise ValueError(f"line {ln.line_no} is its own parent")
 
         return self
 
@@ -415,6 +480,10 @@ class KitchenLineIn(BaseModel):
     station_no: int
     note: str | None = None
     seat_no: int | None = None
+    # The line on this ticket that this one belongs to — the meal a chosen
+    # drink came out of. A cook reading "PEPSI" on its own has no way to know
+    # which of four open meals it belongs to.
+    parent_line_no: int | None = None
 
 
 class KitchenTicketIn(BaseModel):
@@ -440,6 +509,7 @@ class KitchenLineOut(BaseModel):
     station_no: int
     note: str | None = None
     seat_no: int | None = None
+    parent_line_no: int | None = None
     done: bool
     voided: bool
 

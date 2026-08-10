@@ -12,7 +12,7 @@ tombstoned or no device will ever learn it went.
 from __future__ import annotations
 
 from app.db import SessionLocal
-from app.models import ProductQuestion, Question, QuestionChoice
+from app.models import ComboItem, ProductQuestion, Question, QuestionChoice
 from sqlalchemy import select
 
 
@@ -164,6 +164,52 @@ async def test_prompt_changes_reach_a_device(client, seeded):
         )).scalar_one()
         assert row.server_version > before, \
             "the prompt row kept version 0 and no device would ever pull it"
+
+
+async def test_a_device_pulls_everything_it_needs_to_ask(client, seeded):
+    """The prompts have to reach the till, not just the back office.
+
+    Until they did, a manager could set an assignment every till ignored — and
+    the meal rang with nothing chosen while the kitchen was told to make an
+    empty box.
+    """
+    await _seed_questions(seeded)
+    prodnum = seeded["a"]["prodnum"]
+    async with SessionLocal() as s:
+        async with s.begin():
+            s.add(ProductQuestion(
+                tenant_id=seeded["a"]["tenant_id"],
+                prodnum=prodnum, question_no=2020, slot=1, server_version=1,
+            ))
+            s.add(ComboItem(
+                tenant_id=seeded["a"]["tenant_id"],
+                company_id=seeded["a"]["company_id"],
+                parent_prodnum=prodnum, prodnum=prodnum, server_version=1,
+            ))
+
+    body = (await client.get(
+        "/v1/catalog?since=0",
+        headers={"Authorization": f"Bearer {seeded['a']['token']}"},
+    )).json()
+
+    assert {q["question_no"] for q in body["questions"]} == {2020, 2021, 2003}
+    choice = next(c for c in body["question_choices"] if c["question_no"] == 2020)
+    assert choice["prodnum"] == prodnum
+    # What the till prices the answer at. Nothing here means included.
+    assert choice["fixed_price"] is None
+    assert body["product_questions"][0]["slot"] == 1
+    assert body["combo_items"][0]["parent_prodnum"] == prodnum
+    assert body["combo_items"][0]["print_it"] is True
+
+
+async def test_another_tenants_device_pulls_none_of_them(client, seeded):
+    await _seed_questions(seeded, "a")
+    body = (await client.get(
+        "/v1/catalog?since=0",
+        headers={"Authorization": f"Bearer {seeded['b']['token']}"},
+    )).json()
+    assert body["questions"] == []
+    assert body["question_choices"] == []
 
 
 async def test_questions_never_leak_across_tenants(client, seeded):

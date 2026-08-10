@@ -363,8 +363,13 @@ class QuestionChoice(Base):
     question_no: Mapped[int] = mapped_column(Integer)
     prodnum: Mapped[int] = mapped_column(Integer)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
-    # 0 in every imported row: the choice is included, not charged. Kept so a
-    # customer who starts charging for upgrades has somewhere to put it.
+    # PixelPoint's PriceMode, carried through raw. The import uses two values —
+    # 0 with no fixed price (100 rows) and 11 with a fixed price of zero (19) —
+    # and both come to the same thing: the choice is included in the meal, not
+    # charged. So the till prices a choice at `fixed_price` when one is set and
+    # zero otherwise, and does not try to interpret the mode. A mode meaning
+    # "charge the tier price" does not appear in this data, and guessing at one
+    # would invent behaviour that silently double-charges a meal.
     price_mode: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
     fixed_price: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     default_qty: Mapped[int] = mapped_column(Integer, default=1, server_default=sa_text("1"))
@@ -693,6 +698,12 @@ class SaleLine(Base):
     tax_amount: Mapped[int] = mapped_column(BigInteger)
     line_total: Mapped[int] = mapped_column(BigInteger)
     seat_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The line this one belongs to: the meal a chosen drink came out of, or an
+    # item a combo always includes. Self-referential and nullable — most lines
+    # stand alone. No foreign key: lines arrive in one batch from a device and
+    # the order within that batch is the device's business, not a constraint
+    # worth failing a whole sale over.
+    parent_line: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     voided: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
 
     sale: Mapped[Sale] = relationship(back_populates="lines")
@@ -920,6 +931,9 @@ class KitchenTicketLine(Base):
     # Which station cooks it — resolved from product.print_loc on the till, so
     # the kitchen sees the routing even if the catalog changes afterwards.
     station_no: Mapped[int] = mapped_column(Integer)
+    # The line_no on this ticket that this line belongs to. A cook reading
+    # "PEPSI" on its own cannot tell which of four open meals it came out of.
+    parent_line_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
     done: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
     voided: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
 

@@ -214,7 +214,11 @@ class _KdsScreenState extends State<KdsScreen> {
                   for (final l in lines)
                     CheckboxListTile(
                       dense: true,
-                      contentPadding: EdgeInsets.zero,
+                      // Chosen and included items sit under the item they came
+                      // out of. Flat, a cook reading "PEPSI" has four open
+                      // meals to guess between.
+                      contentPadding: EdgeInsets.only(
+                          left: l['parent_line_no'] == null ? 0 : 20),
                       controlAffinity: ListTileControlAffinity.leading,
                       value: l['done'] == true,
                       onChanged: (v) async {

@@ -182,6 +182,79 @@ CREATE TABLE menu_button (
 );
 CREATE INDEX ix_menu_button_menu ON menu_button(menu_id, position);
 
+-- ------------------------------------------------------------
+-- MEAL DEALS  (pull: server -> device)
+-- ------------------------------------------------------------
+-- What the till must ask before an item can be rung, and what a combo always
+-- includes. 91 imported products ask at least one question; without these the
+-- meal rings with nothing chosen and the kitchen is told to make an empty box.
+--
+-- No foreign keys onto product on purpose: these reference products by number,
+-- a product can be withdrawn in the back office after the prompt was written,
+-- and a stale reference must make the choice unofferable — not fail the whole
+-- catalog apply. Every read joins product, so a missing one simply drops out.
+
+CREATE TABLE question (
+    question_no    INTEGER PRIMARY KEY,       -- PixelPoint OPTIONINDEX
+    prompt         TEXT NOT NULL,             -- '1 DRINKS', 'Bread Selection'
+    prompt_ar      TEXT,
+    is_required    INTEGER NOT NULL DEFAULT 1,-- 0 = the cashier may skip it
+    pick_count     INTEGER NOT NULL DEFAULT 1,-- the Tabakat platters ask for 6
+    allow_repeats  INTEGER NOT NULL DEFAULT 0,-- same choice more than once
+    free_choices   INTEGER NOT NULL DEFAULT 0,
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0
+);
+
+-- One answer to a question — itself a product.
+CREATE TABLE question_choice (
+    id             TEXT PRIMARY KEY,          -- uuid, assigned by the backend
+    question_no    INTEGER NOT NULL,
+    prodnum        INTEGER NOT NULL,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    -- PixelPoint's PriceMode, carried raw. Both values in the import (0 with
+    -- no fixed price, 11 with a fixed price of zero) mean the same thing: the
+    -- choice is included in the meal. The till charges fixed_price when set
+    -- and nothing otherwise; it does not interpret the mode.
+    price_mode     INTEGER NOT NULL DEFAULT 0,
+    fixed_price    INTEGER,
+    default_qty    INTEGER NOT NULL DEFAULT 1,
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX ix_question_choice_q ON question_choice(question_no, sort_order);
+
+-- Which questions a product asks, in slot order (1-5).
+CREATE TABLE product_question (
+    id             TEXT PRIMARY KEY,          -- uuid, assigned by the backend
+    prodnum        INTEGER NOT NULL,
+    question_no    INTEGER NOT NULL,
+    slot           INTEGER NOT NULL,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (prodnum, slot)
+);
+CREATE INDEX ix_product_question_prod ON product_question(prodnum, slot);
+
+-- What a combo always includes, with nothing to choose: a Bucket BROSTED comes
+-- with a litre, a garlic and a hummos. The customer is not asked; the kitchen
+-- still has to be told. Two rows for the same product mean two of them.
+CREATE TABLE combo_item (
+    id             TEXT PRIMARY KEY,          -- uuid, assigned by the backend
+    parent_prodnum INTEGER NOT NULL,
+    prodnum        INTEGER NOT NULL,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    price_mode     INTEGER NOT NULL DEFAULT 0,
+    fixed_price    INTEGER,
+    print_it       INTEGER NOT NULL DEFAULT 1,-- 0 = on the bill, not the ticket
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX ix_combo_item_parent ON combo_item(parent_prodnum, sort_order);
+
 CREATE TABLE pay_method (
     methodnum      INTEGER PRIMARY KEY,       -- DBA.MethodPay.METHODNUM
     descript       TEXT NOT NULL,             -- CASH / MADA / Visa ...
@@ -294,6 +367,11 @@ CREATE TABLE kitchen_ticket_line (
     qty            REAL NOT NULL DEFAULT 1,
     station_no     INTEGER NOT NULL,          -- resolved from product.print_loc
     note           TEXT,
+    -- The line_no on this ticket this one belongs to: the meal a chosen drink
+    -- came out of. A cook reading 'PEPSI' alone cannot tell which of four open
+    -- meals it is for. Per ticket AND per station: a group that reaches two
+    -- stations is written twice, and each copy carries its own numbering.
+    parent_line_no INTEGER,
     seat_no        INTEGER,
     done           INTEGER NOT NULL DEFAULT 0,
     voided         INTEGER NOT NULL DEFAULT 0

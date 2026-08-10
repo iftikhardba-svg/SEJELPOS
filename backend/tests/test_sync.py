@@ -130,6 +130,67 @@ async def test_push_sale(client, seeded):
     assert body["accepted"][0]["status"] == "accepted"
 
 
+async def test_a_chosen_item_stays_attached_to_its_meal(client, seeded):
+    """A drink chosen inside a meal is a line hung off the meal's line.
+
+    Flat, the bill lists a 0.00 drink beside the meal with nothing tying them
+    together — and nobody reading it later can tell what was actually sold.
+    """
+    sale = make_sale(zatca_icv=91)
+    parent = sale["lines"][0]
+    sale["lines"].append({
+        "line_uuid": str(uuid.uuid4()),
+        "line_no": 2,
+        "prodnum": 2145,
+        "line_des": "COCA COLA MEDIUM",
+        "qty": 1.0,
+        "unit_price": 0,
+        "net_amount": 0,
+        "tax_amount": 0,
+        "line_total": 0,
+        "parent_line": parent["line_uuid"],
+    })
+
+    r = await client.post("/v1/sales", json=[sale], headers=auth(seeded))
+    assert r.json()["rejected"] == [], r.text
+
+    from app.db import SessionLocal
+    from app.models import SaleLine
+    from sqlalchemy import select
+
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(SaleLine).where(
+                SaleLine.sale_uuid == uuid.UUID(sale["sale_uuid"])
+            ).order_by(SaleLine.line_no)
+        )).scalars().all()
+
+    assert rows[0].parent_line is None
+    assert str(rows[1].parent_line) == parent["line_uuid"]
+
+
+async def test_a_line_hanging_off_another_sale_is_refused(client, seeded):
+    """A parent from outside this sale means a bill with an item that belongs
+    to nothing reachable from it."""
+    sale = make_sale(zatca_icv=92)
+    sale["lines"].append({
+        "line_uuid": str(uuid.uuid4()),
+        "line_no": 2,
+        "prodnum": 2145,
+        "line_des": "COCA COLA MEDIUM",
+        "qty": 1.0,
+        "unit_price": 0,
+        "net_amount": 0,
+        "tax_amount": 0,
+        "line_total": 0,
+        "parent_line": str(uuid.uuid4()),     # not in this sale
+    })
+
+    r = await client.post("/v1/sales", json=[sale], headers=auth(seeded))
+    assert r.json()["accepted"] == []
+    assert "not in this sale" in r.json()["rejected"][0]["error"]
+
+
 async def test_push_is_idempotent(client, seeded):
     """A retry after a dropped connection must not create a second sale."""
     sale = make_sale(zatca_icv=51)

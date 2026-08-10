@@ -144,28 +144,112 @@ class _TillScreenState extends State<TillScreen> {
     }
   }
 
-  int get _grossTotal => _cart.fold(
-      0,
-      (sum, l) =>
-          sum + lineTotal(_unitPrice(l.product) ?? 0, l.qty));
+  /// What the customer pays, including anything chosen inside an item.
+  ///
+  /// Extras are free throughout the imported catalog, but they are summed
+  /// here rather than assumed to be zero: completeSale prices them, and a
+  /// till that showed a total the receipt then disagreed with would be
+  /// charging one number and printing another.
+  int get _grossTotal =>
+      _cart.fold(0, (sum, l) =>
+          sum +
+          lineTotal(_unitPrice(l.product) ?? 0, l.qty) +
+          _extrasTotal(l.extras, l.qty));
+
+  static int _extrasTotal(List<CartExtra> extras, double parentQty) {
+    var total = 0;
+    for (final extra in extras) {
+      final qty = extra.qty * parentQty;
+      total += lineTotal(extra.unitPrice, qty) + _extrasTotal(extra.extras, qty);
+    }
+    return total;
+  }
 
   // ------------------------------------------------------------------ acts
 
-  void _add(CatalogProduct p) {
+  Future<void> _add(CatalogProduct p) async {
     if (_unitPrice(p) == null) {
       _toast(
           '${p.descript} has no price for ${_salesType.descript} — set one in '
           'the back office first');
       return;
     }
+
+    final extras = await _configure(p);
+    if (extras == null) return; // the cashier backed out; nothing is added
+    if (!mounted) return;
+
     setState(() {
-      final existing = _cart.where((l) => l.product.prodnum == p.prodnum);
-      if (existing.isNotEmpty) {
+      // A configured item never merges with an identical one already in the
+      // cart: two of the same meal can have different answers, and adding to
+      // the first line would silently give the second customer the first
+      // one's drink.
+      final existing = _cart.where(
+          (l) => l.product.prodnum == p.prodnum && l.extras.isEmpty);
+      if (extras.isEmpty && existing.isNotEmpty) {
         existing.first.qty += 1;
       } else {
-        _cart.add(CartLine(product: p, qty: 1));
+        _cart.add(CartLine(product: p, qty: 1, extras: extras));
       }
     });
+  }
+
+  /// How deep a chain of prompts may go before the till stops asking.
+  ///
+  /// Nothing in the imported catalog nests more than twice. The cap is here
+  /// because a choice that offers a product which offers it back would
+  /// otherwise open dialogs forever, and a cashier could never finish the
+  /// sale or escape it.
+  static const _maxPromptDepth = 3;
+
+  /// Ask everything [product] asks, and collect what it always includes.
+  ///
+  /// Returns the answers, an empty list when there is nothing to ask, or null
+  /// if the cashier cancelled — in which case the item is not added at all.
+  /// Half-configured is not a state a bill may be in.
+  Future<List<CartExtra>?> _configure(CatalogProduct product,
+      {int depth = 0}) async {
+    final extras = <CartExtra>[];
+
+    for (final question in widget.db.questionsFor(product.prodnum)) {
+      final picked = await _ask(product, question);
+      if (picked == null) return null;
+      for (final choice in picked) {
+        var nested = const <CartExtra>[];
+        if (depth < _maxPromptDepth) {
+          final inner = await _configure(choice.product, depth: depth + 1);
+          if (inner == null) return null;
+          nested = inner;
+        }
+        extras.add(CartExtra(
+          product: choice.product,
+          qty: choice.qty,
+          unitPrice: choice.unitPrice,
+          questionNo: question.questionNo,
+          extras: nested,
+        ));
+      }
+    }
+
+    // Nobody is asked about these — they come with the item — but the kitchen
+    // and the bill still have to carry them.
+    extras.addAll(widget.db.comboItemsFor(product.prodnum));
+    return extras;
+  }
+
+  Future<List<MealChoice>?> _ask(
+      CatalogProduct product, MealQuestion question) {
+    return showDialog<List<MealChoice>>(
+      context: context,
+      // A prompt is not dismissible by tapping outside: an item that ends up
+      // half-answered because a sleeve brushed the screen reaches the kitchen
+      // as an order nobody can make.
+      barrierDismissible: false,
+      builder: (context) => _QuestionDialog(
+        itemName: product.label,
+        question: question,
+      ),
+    );
   }
 
   void _bump(CartLine line, double by) {
@@ -667,7 +751,7 @@ class _TillScreenState extends State<TillScreen> {
         // look rather than being painted an invented shade.
         if (back == null) {
           return OutlinedButton(
-            onPressed: unit == null ? null : () => _add(p),
+            onPressed: unit == null ? null : () => unawaited(_add(p)),
             style: OutlinedButton.styleFrom(
               alignment: Alignment.topLeft,
               padding: const EdgeInsets.all(10),
@@ -677,7 +761,7 @@ class _TillScreenState extends State<TillScreen> {
           );
         }
         return FilledButton(
-          onPressed: unit == null ? null : () => _add(p),
+          onPressed: unit == null ? null : () => unawaited(_add(p)),
           style: FilledButton.styleFrom(
             backgroundColor: back,
             foregroundColor: fore,
@@ -701,7 +785,7 @@ class _TillScreenState extends State<TillScreen> {
                 ? const Center(child: Text('Tap an item to start'))
                 : ListView(
                     children: [
-                      for (final line in _cart)
+                      for (final line in _cart) ...[
                         ListTile(
                           dense: true,
                           title: Text(line.product.descript,
@@ -726,6 +810,11 @@ class _TillScreenState extends State<TillScreen> {
                             ],
                           ),
                         ),
+                        // What was chosen inside the item, under it. Shown
+                        // because the cashier has to be able to read back what
+                        // they just answered before taking the money.
+                        ..._extraTiles(line.extras, line.qty, scheme),
+                      ],
                     ],
                   ),
           ),
@@ -776,6 +865,43 @@ class _TillScreenState extends State<TillScreen> {
     );
   }
 
+  /// The chosen and included items under a cart line, indented by depth.
+  List<Widget> _extraTiles(
+    List<CartExtra> extras,
+    double parentQty,
+    ColorScheme scheme, {
+    int depth = 1,
+  }) {
+    final tiles = <Widget>[];
+    for (final extra in extras) {
+      final qty = extra.qty * parentQty;
+      tiles.add(Padding(
+        padding: EdgeInsets.only(left: 16.0 * depth, right: 16, bottom: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                qty == 1
+                    ? '· ${extra.product.descript}'
+                    : '· ${qty.toStringAsFixed(0)} × ${extra.product.descript}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+              ),
+            ),
+            // Silent when it is included, which is every row in this catalog.
+            // A price that appears is one the customer is being charged.
+            if (extra.unitPrice != 0)
+              Text(formatHalalas(lineTotal(extra.unitPrice, qty)),
+                  style: const TextStyle(fontSize: 12)),
+          ],
+        ),
+      ));
+      tiles.addAll(_extraTiles(extra.extras, qty, scheme, depth: depth + 1));
+    }
+    return tiles;
+  }
+
   Widget _totalRow(String label, int halalas, {bool bold = false}) {
     final style = bold
         ? const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)
@@ -793,6 +919,137 @@ class _TillScreenState extends State<TillScreen> {
           Text(formatHalalas(halalas), style: style),
         ],
       ),
+    );
+  }
+}
+
+/// One prompt: "1 DRINKS", "Bread Selection", "TABAKAT 6 GRILL".
+///
+/// Pops the chosen answers, an empty list when an optional prompt is skipped,
+/// or null when the cashier cancels the item altogether.
+class _QuestionDialog extends StatefulWidget {
+  const _QuestionDialog({required this.itemName, required this.question});
+
+  final String itemName;
+  final MealQuestion question;
+
+  @override
+  State<_QuestionDialog> createState() => _QuestionDialogState();
+}
+
+class _QuestionDialogState extends State<_QuestionDialog> {
+  final List<MealChoice> _picked = [];
+
+  MealQuestion get _q => widget.question;
+
+  void _choose(MealChoice choice) {
+    setState(() => _picked.add(choice));
+    if (_picked.length >= _q.pickCount) {
+      // The last answer closes the prompt. Most prompts take exactly one, and
+      // making the cashier confirm a decision they have already made is a tap
+      // per item across a lunch rush.
+      Navigator.of(context).pop(List.of(_picked));
+    }
+  }
+
+  bool _taken(MealChoice choice) =>
+      !_q.allowRepeats &&
+      _picked.any((c) => c.product.prodnum == choice.product.prodnum);
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final remaining = _q.pickCount - _picked.length;
+
+    return AlertDialog(
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_q.prompt),
+          Text(
+            widget.itemName,
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (_q.pickCount > 1)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Choose $remaining more of ${_q.pickCount}'
+                  '${_q.allowRepeats ? " — repeats allowed" : ""}',
+                  style: TextStyle(color: scheme.primary),
+                ),
+              ),
+            Flexible(
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final choice in _q.choices)
+                      SizedBox(
+                        width: 170,
+                        height: 72,
+                        child: OutlinedButton(
+                          onPressed:
+                              _taken(choice) ? null : () => _choose(choice),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.all(8),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: Text(
+                            choice.product.descript,
+                            textAlign: TextAlign.center,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            if (_picked.isNotEmpty) ...[
+              const Divider(),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (var i = 0; i < _picked.length; i++)
+                    InputChip(
+                      label: Text(_picked[i].product.descript),
+                      onDeleted: () => setState(() => _picked.removeAt(i)),
+                    ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel item'),
+        ),
+        // Only where the source says the prompt may go unanswered. Two of the
+        // twenty-two are optional; offering Skip on the rest would let a meal
+        // reach the kitchen with no main course chosen.
+        if (!_q.isRequired)
+          TextButton(
+            onPressed: () =>
+                Navigator.of(context).pop(List.of(_picked)),
+            child: Text(_picked.isEmpty ? 'Skip' : 'Done'),
+          ),
+      ],
     );
   }
 }

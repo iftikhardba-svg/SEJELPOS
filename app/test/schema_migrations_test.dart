@@ -45,6 +45,20 @@ CREATE TABLE menu_screen (
     menu_id  INTEGER PRIMARY KEY,
     name     TEXT NOT NULL
 );
+CREATE TABLE sync_state (
+    table_name     TEXT PRIMARY KEY,
+    last_version   INTEGER NOT NULL DEFAULT 0,
+    last_pulled_at TEXT
+);
+CREATE TABLE kitchen_ticket_line (
+    line_uuid   TEXT PRIMARY KEY,
+    ticket_uuid TEXT NOT NULL,
+    line_no     INTEGER NOT NULL,
+    prodnum     INTEGER NOT NULL,
+    line_des    TEXT NOT NULL,
+    qty         REAL NOT NULL DEFAULT 1,
+    station_no  INTEGER NOT NULL
+);
 ''';
 
 void main() {
@@ -94,6 +108,40 @@ void main() {
     expect(columns(db, 'menu_screen'), contains('back_color'));
     expect(columns(db, 'product'), contains('button_text'));
     expect(columns(db, 'product'), contains('back_color'));
+  });
+
+  test('meal-deal prompts arrive with version 4', () {
+    final db = openV1();
+    addTearDown(db.dispose);
+
+    migrateTabletSchema(db);
+
+    // Without these an upgraded till holds a catalog it cannot store: the
+    // apply would fail on the first question and no catalog would land at all.
+    expect(columns(db, 'question'), contains('pick_count'));
+    expect(columns(db, 'question_choice'), contains('fixed_price'));
+    expect(columns(db, 'product_question'), contains('slot'));
+    expect(columns(db, 'combo_item'), contains('parent_prodnum'));
+    expect(columns(db, 'kitchen_ticket_line'), contains('parent_line_no'));
+  });
+
+  test('an upgraded till forgets its catalog watermark', () {
+    final db = openV1();
+    addTearDown(db.dispose);
+    db.execute("INSERT INTO sync_state (table_name, last_version) "
+        "VALUES ('catalog', 4211)");
+
+    migrateTabletSchema(db);
+
+    // The prompts were written to the backend before this build existed, so
+    // their server_version is below what this device already pulled. Keeping
+    // the watermark would mean an incremental pull skipped every one of them
+    // and the upgraded till went on asking nothing, permanently.
+    expect(
+      db.select("SELECT last_version FROM sync_state "
+          "WHERE table_name = 'catalog'").first['last_version'],
+      0,
+    );
   });
 
   test('migrating twice is a no-op, not an error', () {

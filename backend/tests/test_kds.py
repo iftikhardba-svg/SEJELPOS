@@ -53,6 +53,24 @@ async def test_create_and_read_back(client, seeded):
     assert t["ticket_id"] in [x["id"] for x in q.json()["open"]]
 
 
+async def test_a_chosen_item_says_which_meal_it_came_out_of(client, seeded):
+    """The cook needs the grouping: "PEPSI" on its own could belong to any of
+    four open meals on the rail."""
+    t = make_ticket(lines=[
+        {"line_no": 1, "prodnum": 2192, "line_des": "2 SANDWICH OFFER",
+         "qty": 1, "station_no": SHAWARMA},
+        {"line_no": 2, "prodnum": 2058, "line_des": "Shawa Sandw Ckn",
+         "qty": 1, "station_no": SHAWARMA, "parent_line_no": 1},
+    ])
+    r = await client.post("/v1/kds/tickets", json=t, headers=auth(seeded))
+    assert r.status_code == 201, r.text
+
+    q = await client.get(f"/v1/kds/queue?station={SHAWARMA}",
+                         headers=auth(seeded))
+    ticket = next(x for x in q.json()["open"] if x["id"] == t["ticket_id"])
+    assert [ln["parent_line_no"] for ln in ticket["lines"]] == [None, 1]
+
+
 async def test_replay_does_not_cook_the_order_twice(client, seeded):
     """The till's outbox retries after a network blink."""
     t = make_ticket()

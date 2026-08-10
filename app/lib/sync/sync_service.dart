@@ -347,6 +347,92 @@ class SyncService {
         );
       }
 
+      for (final q in _list(body['questions'])) {
+        raw.execute(
+          'INSERT INTO question (question_no, prompt, prompt_ar, is_required, '
+          '  pick_count, allow_repeats, free_choices, is_active, '
+          '  server_version, is_deleted) VALUES (?,?,?,?,?,?,?,?,?,?) '
+          'ON CONFLICT(question_no) DO UPDATE SET '
+          '  prompt=excluded.prompt, prompt_ar=excluded.prompt_ar, '
+          '  is_required=excluded.is_required, '
+          '  pick_count=excluded.pick_count, '
+          '  allow_repeats=excluded.allow_repeats, '
+          '  free_choices=excluded.free_choices, '
+          '  is_active=excluded.is_active, '
+          '  server_version=excluded.server_version, '
+          '  is_deleted=excluded.is_deleted',
+          [
+            q['question_no'], q['prompt'], q['prompt_ar'],
+            // Absent reads as required, and absent print_it below as printed:
+            // for these two the "off" value is the one that fails silently —
+            // a required prompt the cashier may skip, an item the kitchen is
+            // never told about.
+            q['is_required'] == null ? 1 : _b(q['is_required']),
+            q['pick_count'] ?? 1,
+            _b(q['allow_repeats']), q['free_choices'] ?? 0,
+            _b(q['is_active']), q['server_version'], _b(q['is_deleted']),
+          ],
+        );
+      }
+
+      for (final c in _list(body['question_choices'])) {
+        raw.execute(
+          'INSERT INTO question_choice (id, question_no, prodnum, sort_order, '
+          '  price_mode, fixed_price, default_qty, is_active, server_version, '
+          '  is_deleted) VALUES (?,?,?,?,?,?,?,?,?,?) '
+          'ON CONFLICT(id) DO UPDATE SET '
+          '  question_no=excluded.question_no, prodnum=excluded.prodnum, '
+          '  sort_order=excluded.sort_order, price_mode=excluded.price_mode, '
+          '  fixed_price=excluded.fixed_price, '
+          '  default_qty=excluded.default_qty, is_active=excluded.is_active, '
+          '  server_version=excluded.server_version, '
+          '  is_deleted=excluded.is_deleted',
+          [
+            c['id'], c['question_no'], c['prodnum'], c['sort_order'] ?? 0,
+            c['price_mode'] ?? 0, c['fixed_price'], c['default_qty'] ?? 1,
+            _b(c['is_active']), c['server_version'], _b(c['is_deleted']),
+          ],
+        );
+      }
+
+      for (final pq in _list(body['product_questions'])) {
+        raw.execute(
+          'INSERT INTO product_question (id, prodnum, question_no, slot, '
+          '  server_version, is_deleted) VALUES (?,?,?,?,?,?) '
+          'ON CONFLICT(id) DO UPDATE SET '
+          '  prodnum=excluded.prodnum, question_no=excluded.question_no, '
+          '  slot=excluded.slot, server_version=excluded.server_version, '
+          '  is_deleted=excluded.is_deleted',
+          [
+            pq['id'], pq['prodnum'], pq['question_no'], pq['slot'],
+            pq['server_version'], _b(pq['is_deleted']),
+          ],
+        );
+      }
+
+      for (final ci in _list(body['combo_items'])) {
+        raw.execute(
+          'INSERT INTO combo_item (id, parent_prodnum, prodnum, sort_order, '
+          '  price_mode, fixed_price, print_it, is_active, server_version, '
+          '  is_deleted) VALUES (?,?,?,?,?,?,?,?,?,?) '
+          'ON CONFLICT(id) DO UPDATE SET '
+          '  parent_prodnum=excluded.parent_prodnum, '
+          '  prodnum=excluded.prodnum, sort_order=excluded.sort_order, '
+          '  price_mode=excluded.price_mode, '
+          '  fixed_price=excluded.fixed_price, print_it=excluded.print_it, '
+          '  is_active=excluded.is_active, '
+          '  server_version=excluded.server_version, '
+          '  is_deleted=excluded.is_deleted',
+          [
+            ci['id'], ci['parent_prodnum'], ci['prodnum'],
+            ci['sort_order'] ?? 0, ci['price_mode'] ?? 0, ci['fixed_price'],
+            ci['print_it'] == null ? 1 : _b(ci['print_it']),
+            _b(ci['is_active']), ci['server_version'],
+            _b(ci['is_deleted']),
+          ],
+        );
+      }
+
       if (advanceWatermark) {
         raw.execute(
           "INSERT INTO sync_state (table_name, last_version, last_pulled_at) "
@@ -409,6 +495,10 @@ class SyncService {
             'tax_amount': l['tax_amount'],
             'line_total': l['line_total'],
             'seat_no': l['seat_no'],
+            // What the choice belonged to. Dropped here, the backend would
+            // hold a bill listing a 0.00 drink beside the meal with nothing
+            // saying it came out of it.
+            'parent_line': l['parent_line'],
             'voided': (l['voided'] as int? ?? 0) != 0,
           },
       ],
@@ -465,6 +555,7 @@ class SyncService {
               'station_no': l['station_no'],
               'note': l['note'],
               'seat_no': l['seat_no'],
+              'parent_line_no': l['parent_line_no'],
             },
         ],
       });

@@ -29,6 +29,7 @@ from ..auth import DeviceContext, current_device
 from ..config import settings
 from ..db import tenant_session
 from ..models import (
+    ComboItem,
     KitchenStation,
     Menu,
     MenuButton,
@@ -36,12 +37,16 @@ from ..models import (
     MenuScreen,
     PayMethod,
     Product,
+    ProductQuestion,
+    Question,
+    QuestionChoice,
     SalesType,
     Staff,
     TaxRate,
 )
 from ..schemas import (
     CatalogResponse,
+    ComboItemOut,
     KitchenStationOut,
     MenuButtonOut,
     MenuOut,
@@ -49,6 +54,9 @@ from ..schemas import (
     MenuScreenOut,
     PayMethodOut,
     ProductOut,
+    ProductQuestionOut,
+    QuestionChoiceOut,
+    QuestionOut,
     SalesTypeOut,
     StaffOut,
     TaxRateOut,
@@ -73,6 +81,13 @@ TABLES = [
     ("tax_rates", TaxRate, TaxRateOut, False),
     ("sales_types", SalesType, SalesTypeOut, False),
     ("kitchen_stations", KitchenStation, KitchenStationOut, True),
+    # Meal-deal prompts. Appended, never inserted: a cursor issued before this
+    # change names a table by index, and putting these in the middle would
+    # resume that pull in the wrong table.
+    ("questions", Question, QuestionOut, False),
+    ("question_choices", QuestionChoice, QuestionChoiceOut, False),
+    ("product_questions", ProductQuestion, ProductQuestionOut, False),
+    ("combo_items", ComboItem, ComboItemOut, False),
 ]
 
 

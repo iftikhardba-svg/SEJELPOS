@@ -26,7 +26,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 /// What `assets/schema.sql` currently creates.
-const int tabletSchemaVersion = 3;
+const int tabletSchemaVersion = 4;
 
 /// version -> the statements that lift a database TO that version.
 const Map<int, List<String>> _steps = {
@@ -72,6 +72,77 @@ const Map<int, List<String>> _steps = {
     ''',
     'CREATE INDEX IF NOT EXISTS ix_menu_page_menu '
         'ON menu_page(menu_no, pos_y, pos_x)',
+  ],
+  // Meal deals: what the till asks before an item can be rung, and what a
+  // combo always includes. Before this a meal rang with nothing chosen and
+  // the kitchen was told to make an empty box.
+  4: [
+    '''
+    CREATE TABLE IF NOT EXISTS question (
+        question_no    INTEGER PRIMARY KEY,
+        prompt         TEXT NOT NULL,
+        prompt_ar      TEXT,
+        is_required    INTEGER NOT NULL DEFAULT 1,
+        pick_count     INTEGER NOT NULL DEFAULT 1,
+        allow_repeats  INTEGER NOT NULL DEFAULT 0,
+        free_choices   INTEGER NOT NULL DEFAULT 0,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0
+    )
+    ''',
+    '''
+    CREATE TABLE IF NOT EXISTS question_choice (
+        id             TEXT PRIMARY KEY,
+        question_no    INTEGER NOT NULL,
+        prodnum        INTEGER NOT NULL,
+        sort_order     INTEGER NOT NULL DEFAULT 0,
+        price_mode     INTEGER NOT NULL DEFAULT 0,
+        fixed_price    INTEGER,
+        default_qty    INTEGER NOT NULL DEFAULT 1,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS ix_question_choice_q '
+        'ON question_choice(question_no, sort_order)',
+    '''
+    CREATE TABLE IF NOT EXISTS product_question (
+        id             TEXT PRIMARY KEY,
+        prodnum        INTEGER NOT NULL,
+        question_no    INTEGER NOT NULL,
+        slot           INTEGER NOT NULL,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (prodnum, slot)
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS ix_product_question_prod '
+        'ON product_question(prodnum, slot)',
+    '''
+    CREATE TABLE IF NOT EXISTS combo_item (
+        id             TEXT PRIMARY KEY,
+        parent_prodnum INTEGER NOT NULL,
+        prodnum        INTEGER NOT NULL,
+        sort_order     INTEGER NOT NULL DEFAULT 0,
+        price_mode     INTEGER NOT NULL DEFAULT 0,
+        fixed_price    INTEGER,
+        print_it       INTEGER NOT NULL DEFAULT 1,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS ix_combo_item_parent '
+        'ON combo_item(parent_prodnum, sort_order)',
+    'ALTER TABLE kitchen_ticket_line ADD COLUMN parent_line_no INTEGER',
+    // Forget the catalog watermark: the rows for these tables were written
+    // long before this build existed, so their server_version is BELOW what
+    // this device has already pulled and an incremental pull would skip every
+    // one of them — the till would upgrade and still ask nothing, for good.
+    // Re-pulling the whole catalog is free; every apply is an upsert.
+    "UPDATE sync_state SET last_version = 0 WHERE table_name = 'catalog'",
   ],
 };
 

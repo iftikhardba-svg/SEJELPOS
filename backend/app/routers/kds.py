@@ -122,6 +122,7 @@ async def create_ticket(
                 station_no=ln.station_no,
                 note=ln.note,
                 seat_no=ln.seat_no,
+                parent_line_no=ln.parent_line_no,
             ))
         await session.flush()
         await session.refresh(ticket, ["lines"])

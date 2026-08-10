@@ -110,6 +110,37 @@ Map<String, dynamic> catalogFixture({int version = 7}) => {
           'is_active': true, 'server_version': 7, 'is_deleted': false,
         },
       ],
+      'questions': [
+        {
+          'question_no': 2003, 'prompt': '1 DRINKS', 'prompt_ar': null,
+          'is_required': false, 'pick_count': 1, 'allow_repeats': false,
+          'free_choices': 99, 'is_active': true, 'server_version': 7,
+          'is_deleted': false,
+        },
+      ],
+      'question_choices': [
+        {
+          'id': 'cccccccc-0000-4000-8000-000000000001', 'question_no': 2003,
+          'prodnum': 2013, 'sort_order': 1, 'price_mode': 11,
+          'fixed_price': 0, 'default_qty': 1, 'is_active': true,
+          'server_version': 7, 'is_deleted': false,
+        },
+      ],
+      'product_questions': [
+        {
+          'id': 'dddddddd-0000-4000-8000-000000000001', 'prodnum': 2152,
+          'question_no': 2003, 'slot': 1, 'server_version': 7,
+          'is_deleted': false,
+        },
+      ],
+      'combo_items': [
+        {
+          'id': 'eeeeeeee-0000-4000-8000-000000000001',
+          'parent_prodnum': 2152, 'prodnum': 2013, 'sort_order': 1,
+          'price_mode': 0, 'fixed_price': null, 'print_it': true,
+          'is_active': true, 'server_version': 7, 'is_deleted': false,
+        },
+      ],
     };
 
 http.Response _json(Object body, {int status = 200}) => http.Response(
@@ -153,6 +184,51 @@ void main() {
       expect(db.productsForScreen(2010).length, 2);
       expect(
           db.raw.select('SELECT COUNT(*) AS n FROM menu_button').first['n'], 2);
+    });
+
+    test('the prompts arrive with the products they belong to', () {
+      service().applyCatalog(catalogFixture());
+
+      // Shipped to the device, not just held on the server: until this the
+      // back office could set a prompt no till would ever ask.
+      final questions = db.questionsFor(2152);
+      expect(questions.single.prompt, '1 DRINKS');
+      expect(questions.single.isRequired, isFalse);
+      expect(questions.single.choices.single.product.prodnum, 2013);
+      expect(questions.single.choices.single.unitPrice, 0,
+          reason: 'fixed_price 0 under price_mode 11 means included');
+      expect(db.comboItemsFor(2152).single.product.descript, 'HUMMOS');
+    });
+
+    test('clearing a prompt slot stops the till asking', () {
+      final s = service();
+      s.applyCatalog(catalogFixture());
+
+      final delta = catalogFixture(version: 8);
+      final dropped =
+          (delta['product_questions'] as List).first as Map<String, dynamic>;
+      dropped['is_deleted'] = true;
+      delta['products'] = [];
+      delta['menu_screens'] = [];
+      delta['menu_buttons'] = [];
+      delta['pay_methods'] = [];
+      delta['staff'] = [];
+      delta['tax_rates'] = [];
+      delta['sales_types'] = [];
+      delta['kitchen_stations'] = [];
+      delta['questions'] = [];
+      delta['question_choices'] = [];
+      delta['combo_items'] = [];
+      s.applyCatalog(delta);
+
+      // The row is tombstoned rather than missing: a vanished row is
+      // invisible to an incremental pull, and the till would ask forever.
+      expect(db.questionsFor(2152), isEmpty);
+      expect(
+        db.raw.select('SELECT COUNT(*) AS n FROM product_question')
+            .first['n'],
+        1,
+      );
     });
 
     test('a tombstone removes the product from the till', () {
