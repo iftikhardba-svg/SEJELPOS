@@ -46,6 +46,12 @@ class ProductOut(CatalogItem):
     print_loc: int = 0
     ref_code: str | None = None
     unit_des: str | None = None
+    # How the till draws the button. Without these the grid renders every item
+    # identically and the imported colour-coded menu is lost on the device
+    # even though the back office can see it.
+    button_text: str | None = None
+    fore_color: str | None = None
+    back_color: str | None = None
     is_active: bool
 
 

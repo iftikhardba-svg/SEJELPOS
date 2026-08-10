@@ -26,7 +26,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 /// What `assets/schema.sql` currently creates.
-const int tabletSchemaVersion = 2;
+const int tabletSchemaVersion = 3;
 
 /// version -> the statements that lift a database TO that version.
 const Map<int, List<String>> _steps = {
@@ -36,6 +36,42 @@ const Map<int, List<String>> _steps = {
     'ALTER TABLE order_counter ADD COLUMN block_end INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE device ADD COLUMN active_empnum INTEGER '
         'REFERENCES employee(empnum)',
+  ],
+  // The menu a till lands on, and the look of the buttons on it. Until this
+  // the till showed a flat strip of every page in alphabetical order, in one
+  // colour — not the menu staff had learned.
+  3: [
+    'ALTER TABLE product ADD COLUMN button_text TEXT',
+    'ALTER TABLE product ADD COLUMN fore_color TEXT',
+    'ALTER TABLE product ADD COLUMN back_color TEXT',
+    'ALTER TABLE menu_screen ADD COLUMN fore_color TEXT',
+    'ALTER TABLE menu_screen ADD COLUMN back_color TEXT',
+    '''
+    CREATE TABLE IF NOT EXISTS menu (
+        menu_no        INTEGER PRIMARY KEY,
+        name           TEXT NOT NULL,
+        name_ar        TEXT,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0
+    )
+    ''',
+    '''
+    CREATE TABLE IF NOT EXISTS menu_page (
+        id             TEXT PRIMARY KEY,
+        menu_no        INTEGER NOT NULL,
+        screen_no      INTEGER NOT NULL,
+        pos_x          INTEGER,
+        pos_y          INTEGER,
+        sort_order     INTEGER NOT NULL DEFAULT 0,
+        is_active      INTEGER NOT NULL DEFAULT 1,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (menu_no, screen_no)
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS ix_menu_page_menu '
+        'ON menu_page(menu_no, pos_y, pos_x)',
   ],
 };
 

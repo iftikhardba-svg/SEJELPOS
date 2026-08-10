@@ -17,9 +17,10 @@ import 'package:sqlite3/sqlite3.dart';
 
 import 'helpers.dart';
 
-/// The v1 shape of the two things version 2 changes: no block_end, no
-/// active_empnum. Trimmed from the real schema so the test does not depend on
-/// a copy of the whole file.
+/// The v1 shape of what the later versions touch: no block_end, no
+/// active_empnum, no button colours, no menu tables. Trimmed from the real
+/// schema so the test does not depend on a copy of the whole file — it grows
+/// only when a migration step needs another table to alter.
 const _v1 = '''
 CREATE TABLE device (
     id              INTEGER PRIMARY KEY CHECK (id = 1),
@@ -40,6 +41,10 @@ CREATE TABLE order_counter (
     next_number    INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE product (prodnum INTEGER PRIMARY KEY);
+CREATE TABLE menu_screen (
+    menu_id  INTEGER PRIMARY KEY,
+    name     TEXT NOT NULL
+);
 ''';
 
 void main() {
@@ -60,7 +65,7 @@ void main() {
   int version(Database db) =>
       db.select('PRAGMA user_version').first.values.first as int;
 
-  test('a version 1 database gains the version 2 columns', () {
+  test('a version 1 database climbs to the current version', () {
     final db = openV1();
     addTearDown(db.dispose);
 
@@ -69,10 +74,26 @@ void main() {
 
     final applied = migrateTabletSchema(db);
 
-    expect(applied, [2]);
+    // Every step above 1, in order — not just the newest.
+    expect(applied, [for (var v = 2; v <= tabletSchemaVersion; v++) v]);
     expect(columns(db, 'order_counter'), contains('block_end'));
     expect(columns(db, 'device'), contains('active_empnum'));
     expect(version(db), tabletSchemaVersion);
+  });
+
+  test('the menu a till lands on arrives with version 3', () {
+    final db = openV1();
+    addTearDown(db.dispose);
+
+    migrateTabletSchema(db);
+
+    // A till that upgraded rather than reinstalled must get the menu tables,
+    // or it falls back to a flat page list forever.
+    expect(columns(db, 'menu'), contains('menu_no'));
+    expect(columns(db, 'menu_page'), contains('screen_no'));
+    expect(columns(db, 'menu_screen'), contains('back_color'));
+    expect(columns(db, 'product'), contains('button_text'));
+    expect(columns(db, 'product'), contains('back_color'));
   });
 
   test('migrating twice is a no-op, not an error', () {
@@ -134,8 +155,8 @@ void main() {
   test('a failed step leaves the version untouched', () {
     final db = openV1();
     addTearDown(db.dispose);
-    // order_counter is what step 2 alters first; removing it makes the step
-    // fail part way.
+    // order_counter is what the first step alters; removing it makes the
+    // climb fail part way.
     db.execute('DROP TABLE order_counter');
 
     expect(() => migrateTabletSchema(db), throwsA(anything));

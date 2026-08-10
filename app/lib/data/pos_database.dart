@@ -29,6 +29,11 @@ class CatalogProduct {
     required this.tiers,
     required this.printLoc,
     required this.taxApplies,
+    this.buttonText,
+    this.foreColor,
+    this.backColor,
+    this.posX,
+    this.posY,
   });
 
   final int prodnum;
@@ -36,6 +41,43 @@ class CatalogProduct {
   final PriceTiers tiers;
   final int printLoc;
   final bool taxApplies;
+
+  /// What the tile says, which is not the description: it is what fits, and
+  /// on the imported menu 308 of 560 differ.
+  final String? buttonText;
+
+  /// '#RRGGBB', or null to use the app's theme.
+  final String? foreColor;
+  final String? backColor;
+
+  /// Where the button sits on its page. Null on a product fetched outside a
+  /// page context.
+  final int? posX;
+  final int? posY;
+
+  /// The label a cashier reads.
+  String get label => (buttonText == null || buttonText!.isEmpty)
+      ? descript
+      : buttonText!;
+}
+
+/// A page tile on the menu a till opens on.
+class MenuTile {
+  MenuTile({
+    required this.screenNo,
+    required this.name,
+    required this.posX,
+    required this.posY,
+    this.foreColor,
+    this.backColor,
+  });
+
+  final int screenNo;
+  final String name;
+  final int posX;
+  final int posY;
+  final String? foreColor;
+  final String? backColor;
 }
 
 class SalesType {
@@ -161,15 +203,70 @@ class PosDatabase {
     final rows = _db.select(
       'SELECT p.prodnum, p.descript, p.print_loc, p.tax_applies, '
       '       p.price_a, p.price_b, p.price_c, p.price_d, p.price_e, '
-      '       p.price_f, p.price_g, p.price_h, p.price_i, p.price_j '
+      '       p.price_f, p.price_g, p.price_h, p.price_i, p.price_j, '
+      '       p.button_text, p.fore_color, p.back_color, '
+      '       b.pos_x, b.pos_y '
       'FROM menu_button b '
       'JOIN product p ON p.prodnum = b.prodnum '
       'WHERE b.menu_id = ? AND b.is_deleted = 0 '
       '  AND p.is_active = 1 AND p.is_deleted = 0 AND p.is_modifier = 0 '
-      'ORDER BY b.position',
+      'ORDER BY b.pos_y, b.pos_x, b.position',
       [menuId],
     );
     return [for (final r in rows) _product(r)];
+  }
+
+  /// The menu a till opens on: the tiles, in grid order.
+  ///
+  /// Picks the first active menu that actually has pages on it. A site with
+  /// several menus — this customer has three — usually has one laid out and
+  /// the rest empty, and landing on an empty one would look like a broken
+  /// till.
+  ({int menuNo, String name})? defaultMenu() {
+    final rows = _db.select(
+      'SELECT m.menu_no, m.name FROM menu m '
+      'WHERE m.is_active = 1 AND m.is_deleted = 0 '
+      '  AND EXISTS (SELECT 1 FROM menu_page p '
+      '              WHERE p.menu_no = m.menu_no AND p.is_active = 1 '
+      '                AND p.is_deleted = 0 AND p.pos_x IS NOT NULL) '
+      'ORDER BY m.menu_no LIMIT 1',
+    );
+    if (rows.isEmpty) return null;
+    return (menuNo: rows.first['menu_no'] as int,
+            name: rows.first['name'] as String);
+  }
+
+  /// Page tiles on [menuNo], only those that lead somewhere: a tile onto an
+  /// empty page is a dead end a cashier finds mid-service.
+  List<MenuTile> menuTiles(int menuNo) {
+    final rows = _db.select(
+      'SELECT p.screen_no, p.pos_x, p.pos_y, s.name, '
+      '       s.fore_color, s.back_color '
+      'FROM menu_page p '
+      'JOIN menu_screen s ON s.menu_id = p.screen_no '
+      'WHERE p.menu_no = ? AND p.is_active = 1 AND p.is_deleted = 0 '
+      '  AND p.pos_x IS NOT NULL AND p.pos_y IS NOT NULL '
+      '  AND s.is_active = 1 AND s.is_deleted = 0 '
+      '  AND EXISTS ('
+      '    SELECT 1 FROM menu_button b '
+      '    JOIN product pr ON pr.prodnum = b.prodnum '
+      '    WHERE b.menu_id = s.menu_id AND b.is_deleted = 0 '
+      '      AND pr.is_active = 1 AND pr.is_deleted = 0 AND pr.is_modifier = 0'
+      '  ) '
+      'ORDER BY p.pos_y, p.pos_x',
+      [menuNo],
+    );
+    return [
+      for (final r in rows)
+        MenuTile(
+          screenNo: r['screen_no'] as int,
+          name: r['name'] as String,
+          posX: r['pos_x'] as int,
+          posY: r['pos_y'] as int,
+          foreColor: r['fore_color'] as String?,
+          backColor: r['back_color'] as String?,
+        ),
+    ];
   }
 
   /// Menu screens a cashier can actually use.
@@ -211,7 +308,31 @@ class PosDatabase {
         ],
         printLoc: (r['print_loc'] as int?) ?? 0,
         taxApplies: (r['tax_applies'] as int) != 0,
+        buttonText: _maybe(r, 'button_text'),
+        foreColor: _maybe(r, 'fore_color'),
+        backColor: _maybe(r, 'back_color'),
+        posX: _maybeInt(r, 'pos_x'),
+        posY: _maybeInt(r, 'pos_y'),
       );
+
+  /// Not every query selects the button columns, so reading one that was not
+  /// asked for must be absent rather than an error.
+  static String? _maybe(Row r, String column) {
+    try {
+      final value = r[column];
+      return value is String && value.isNotEmpty ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static int? _maybeInt(Row r, String column) {
+    try {
+      return r[column] as int?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Cashiers who can be put on this till, in the order a human scans a list.
   List<({int empnum, String name})> cashiers() {

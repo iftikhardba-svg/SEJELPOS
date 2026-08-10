@@ -62,15 +62,57 @@ class _TillScreenState extends State<TillScreen> {
   /// counter would call the same number to different customers.
   OrderNumber? _pending;
 
+  /// The menu tiles a cashier lands on, empty when no menu is laid out.
+  late final List<MenuTile> _tiles;
+  late final ({int menuNo, String name})? _menu;
+
+  /// Null while the menu grid is showing; set once a page is opened.
+  int? _openPage;
+
   @override
   void initState() {
     super.initState();
     _salesTypes = widget.db.salesTypes();
     _screens = widget.db.menuScreens();
     _salesType = _salesTypes.first;
+    _menu = widget.db.defaultMenu();
+    final menu = _menu;
+    _tiles = menu == null ? const [] : widget.db.menuTiles(menu.menuNo);
+    // With no menu laid out, fall back to the flat list of pages rather than
+    // showing a cashier nothing at all.
     _activeMenu = _screens.first.menuId;
+    _openPage = _tiles.isEmpty ? _activeMenu : null;
     _items = widget.db.productsForScreen(_activeMenu);
     unawaited(_takeOrderNumber());
+  }
+
+  void _openMenuPage(int screenNo) {
+    setState(() {
+      _openPage = screenNo;
+      _activeMenu = screenNo;
+      _items = widget.db.productsForScreen(screenNo);
+    });
+  }
+
+  void _backToMenu() {
+    setState(() => _openPage = null);
+  }
+
+  /// '#RRGGBB' from the catalog, or null to leave the theme alone.
+  static Color? _colour(String? hex) {
+    if (hex == null || hex.length != 7 || !hex.startsWith('#')) return null;
+    final value = int.tryParse(hex.substring(1), radix: 16);
+    return value == null ? null : Color(0xFF000000 | value);
+  }
+
+  /// Black or white, whichever the eye can read on [background].
+  ///
+  /// The imported menu has 27 background colours and almost no foreground
+  /// ones, so most tiles would otherwise be theme-coloured text on an
+  /// arbitrary colour — white on yellow, for instance.
+  static Color _readableOn(Color background) {
+    final luminance = background.computeLuminance();
+    return luminance > 0.45 ? const Color(0xFF111111) : Colors.white;
   }
 
   /// Held before the sale, not after, so the number is on screen while the
@@ -423,80 +465,229 @@ class _TillScreenState extends State<TillScreen> {
     );
   }
 
+  /// Two screens in one panel, the way the old till worked: the menu is a
+  /// grid of coloured page tiles, and opening one shows that page's buttons.
+  /// Staff reach for a position and a colour long before they read a label,
+  /// so both are carried over exactly.
   Widget _menuPanel(ColorScheme scheme) {
+    if (_openPage == null) return _menuGrid(scheme);
     return Column(
       children: [
-        SizedBox(
-          height: 44,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            children: [
-              for (final s in _screens)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    selected: s.menuId == _activeMenu,
-                    showCheckmark: false,
-                    onSelected: (_) => setState(() {
-                      _activeMenu = s.menuId;
-                      _items = widget.db.productsForScreen(s.menuId);
-                    }),
-                    label: Text(s.name),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.all(8),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 170,
-              mainAxisExtent: 84,
-              crossAxisSpacing: 8,
-              mainAxisSpacing: 8,
-            ),
-            itemCount: _items.length,
-            itemBuilder: (context, i) {
-              final p = _items[i];
-              final unit = _unitPrice(p);
-              return OutlinedButton(
-                onPressed: unit == null ? null : () => _add(p),
-                style: OutlinedButton.styleFrom(
-                  alignment: Alignment.topLeft,
-                  padding: const EdgeInsets.all(10),
-                  // Material 3 defaults OutlinedButton to a StadiumBorder,
-                  // which on an 84px-tall tile is a full oval: the corners eat
-                  // the item name and the price, and the grid stops reading as
-                  // a grid. A menu tile has to be a rectangle.
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(p.descript,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12)),
-                    ),
-                    Text(
-                      unit == null ? 'no price' : formatHalalas(unit),
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: scheme.primary,
+        _pageHeader(scheme),
+        Expanded(child: _buttonGrid(scheme)),
+      ],
+    );
+  }
+
+  /// Lay items out at their real grid coordinates, leaving gaps empty.
+  ///
+  /// Packing them in order instead would be much simpler and would quietly
+  /// destroy the thing being carried over: staff reach for a position. If a
+  /// page is hidden — because everything on it is a modifier, say — the ones
+  /// after it must NOT slide up into its place.
+  Widget _positionedGrid<T>({
+    required List<T> items,
+    required int? Function(T) x,
+    required int? Function(T) y,
+    required double tileHeight,
+    required Widget Function(T) build,
+  }) {
+    final placed = <int, Map<int, T>>{};
+    var columns = 1;
+    var rows = 1;
+    for (final item in items) {
+      final ix = x(item), iy = y(item);
+      if (ix == null || iy == null) continue;
+      placed.putIfAbsent(iy, () => {})[ix] = item;
+      if (ix > columns) columns = ix;
+      if (iy > rows) rows = iy;
+    }
+
+    // Anything without coordinates still has to be reachable, so it goes on
+    // the end rather than being dropped.
+    final loose = [for (final i in items) if (x(i) == null || y(i) == null) i];
+
+    return ListView(
+      padding: const EdgeInsets.all(8),
+      children: [
+        for (var row = 1; row <= rows; row++)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            // NOT CrossAxisAlignment.stretch: a Row inside a vertical
+            // ListView has unbounded height, and stretching into that is an
+            // invalid constraint. The SizedBox below sets the height instead.
+            child: Row(
+              children: [
+                for (var col = 1; col <= columns; col++)
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: SizedBox(
+                        height: tileHeight,
+                        child: placed[row]?[col] == null
+                            ? const SizedBox.shrink()
+                            : build(placed[row]![col] as T),
                       ),
                     ),
-                  ],
-                ),
-              );
-            },
+                  ),
+              ],
+            ),
           ),
-        ),
+        if (loose.isNotEmpty)
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final item in loose)
+                SizedBox(width: 170, height: tileHeight, child: build(item)),
+            ],
+          ),
       ],
+    );
+  }
+
+  Widget _menuGrid(ColorScheme scheme) {
+    return _positionedGrid<MenuTile>(
+      items: _tiles,
+      x: (t) => t.posX,
+      y: (t) => t.posY,
+      tileHeight: 96,
+      build: (tile) {
+        final back = _colour(tile.backColor);
+        final fore = _colour(tile.foreColor) ??
+            (back == null ? null : _readableOn(back));
+        return FilledButton(
+          onPressed: () => _openMenuPage(tile.screenNo),
+          style: FilledButton.styleFrom(
+            backgroundColor: back,
+            foregroundColor: fore,
+            padding: const EdgeInsets.all(10),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+          child: Text(
+            tile.name,
+            textAlign: TextAlign.center,
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _pageHeader(ColorScheme scheme) {
+    final name = _screens
+        .where((s) => s.menuId == _openPage)
+        .map((s) => s.name)
+        .firstOrNull;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      child: Row(
+        children: [
+          // Only offered when there is a menu to go back to. With no menu laid
+          // out the till falls back to a flat page strip and this would lead
+          // to an empty screen.
+          if (_tiles.isNotEmpty)
+            TextButton.icon(
+              onPressed: _backToMenu,
+              icon: const Icon(Icons.arrow_back),
+              label: Text(_menu?.name ?? 'Menu'),
+            ),
+          const SizedBox(width: 8),
+          Text(name ?? '',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          if (_tiles.isEmpty) ...[
+            const Spacer(),
+            SizedBox(
+              width: 320,
+              height: 40,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final s in _screens)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: FilterChip(
+                        selected: s.menuId == _activeMenu,
+                        showCheckmark: false,
+                        onSelected: (_) => _openMenuPage(s.menuId),
+                        label: Text(s.name),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buttonGrid(ColorScheme scheme) {
+    return _positionedGrid<CatalogProduct>(
+      items: _items,
+      x: (p) => p.posX,
+      y: (p) => p.posY,
+      tileHeight: 84,
+      build: (p) {
+        final unit = _unitPrice(p);
+        final back = _colour(p.backColor);
+        final fore = _colour(p.foreColor) ??
+            (back == null ? null : _readableOn(back));
+
+        // Material 3 defaults OutlinedButton to a StadiumBorder, which on an
+        // 84px-tall tile is a full oval: the corners eat the name and the
+        // price. A menu tile has to be a rectangle.
+        final shape = RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        );
+        final label = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(p.label,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12)),
+            ),
+            Text(
+              unit == null ? 'no price' : formatHalalas(unit),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: fore ?? scheme.primary,
+              ),
+            ),
+          ],
+        );
+
+        // A coloured button is filled; one with no colour keeps the outlined
+        // look rather than being painted an invented shade.
+        if (back == null) {
+          return OutlinedButton(
+            onPressed: unit == null ? null : () => _add(p),
+            style: OutlinedButton.styleFrom(
+              alignment: Alignment.topLeft,
+              padding: const EdgeInsets.all(10),
+              shape: shape,
+            ),
+            child: label,
+          );
+        }
+        return FilledButton(
+          onPressed: unit == null ? null : () => _add(p),
+          style: FilledButton.styleFrom(
+            backgroundColor: back,
+            foregroundColor: fore,
+            alignment: Alignment.topLeft,
+            padding: const EdgeInsets.all(10),
+            shape: shape,
+          ),
+          child: label,
+        );
+      },
     );
   }
 

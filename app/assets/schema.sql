@@ -107,12 +107,47 @@ CREATE TABLE product (
     is_active      INTEGER NOT NULL DEFAULT 1,
     ref_code       TEXT,                      -- REFCODE / barcode
     unit_des       TEXT,
+    -- How the till button looks. The label is NOT the description: it is what
+    -- fits on a tile, and 308 of 560 imported products differ. The colours are
+    -- '#RRGGBB' or NULL for the theme — the imported menu uses 27 of them, and
+    -- staff find an item by colour before they read it.
+    button_text    TEXT,
+    fore_color     TEXT,
+    back_color     TEXT,
     server_version INTEGER NOT NULL DEFAULT 0,
     is_deleted     INTEGER NOT NULL DEFAULT 0 -- tombstone
 );
 CREATE INDEX ix_product_active  ON product(is_active, is_deleted);
 CREATE INDEX ix_product_type    ON product(prodtype);
 CREATE INDEX ix_product_refcode ON product(ref_code);
+
+-- A whole menu: the grid of page tiles a till opens on. The level above order
+-- pages, and how a cashier gets anywhere. Without it the till can only offer a
+-- flat list of every page, which is not the menu anyone learned.
+CREATE TABLE menu (
+    menu_no        INTEGER PRIMARY KEY,
+    name           TEXT NOT NULL,
+    name_ar        TEXT,
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0
+);
+
+-- Where a page sits on a menu. A join, not a column on menu_screen: one page
+-- appears on several menus, at a different tile on each.
+CREATE TABLE menu_page (
+    id             TEXT PRIMARY KEY,          -- uuid, assigned by the backend
+    menu_no        INTEGER NOT NULL,
+    screen_no      INTEGER NOT NULL,          -- -> menu_screen.menu_id
+    pos_x          INTEGER,
+    pos_y          INTEGER,
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    is_active      INTEGER NOT NULL DEFAULT 1,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (menu_no, screen_no)
+);
+CREATE INDEX ix_menu_page_menu ON menu_page(menu_no, pos_y, pos_x);
 
 -- Menu screens (PIXELMENU) and the buttons on them (MenuProdPos).
 CREATE TABLE menu_screen (
@@ -122,6 +157,9 @@ CREATE TABLE menu_screen (
     sort_order     INTEGER NOT NULL DEFAULT 0,
     buttons_across INTEGER,                   -- grid layout from the source
     buttons_down   INTEGER,
+    -- The page tile's colours on the menu grid, '#RRGGBB' or NULL.
+    fore_color     TEXT,
+    back_color     TEXT,
     is_modifier_screen INTEGER NOT NULL DEFAULT 0,
     is_active      INTEGER NOT NULL DEFAULT 1,
     server_version INTEGER NOT NULL DEFAULT 0,

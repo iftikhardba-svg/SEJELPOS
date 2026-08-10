@@ -134,8 +134,9 @@ class SyncService {
           '  price_a, price_b, price_c, price_d, price_e, price_f, '
           '  price_g, price_h, price_i, price_j, prodtype, tax_applies, '
           '  is_weighed, manual_price, is_modifier, print_loc, ref_code, '
-          '  unit_des, is_active, server_version, is_deleted) '
-          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
+          '  unit_des, button_text, fore_color, back_color, '
+          '  is_active, server_version, is_deleted) '
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) '
           'ON CONFLICT(prodnum) DO UPDATE SET '
           '  descript=excluded.descript, descript_ar=excluded.descript_ar, '
           '  print_des=excluded.print_des, '
@@ -149,6 +150,8 @@ class SyncService {
           '  manual_price=excluded.manual_price, '
           '  is_modifier=excluded.is_modifier, print_loc=excluded.print_loc, '
           '  ref_code=excluded.ref_code, unit_des=excluded.unit_des, '
+          '  button_text=excluded.button_text, '
+          '  fore_color=excluded.fore_color, back_color=excluded.back_color, '
           '  is_active=excluded.is_active, '
           '  server_version=excluded.server_version, '
           '  is_deleted=excluded.is_deleted',
@@ -160,7 +163,43 @@ class SyncService {
             _b(p['tax_applies']), _b(p['is_weighed']),
             _b(p['manual_price']), _b(p['is_modifier']),
             p['print_loc'] ?? 0, p['ref_code'], p['unit_des'],
+            p['button_text'], p['fore_color'], p['back_color'],
             _b(p['is_active']), p['server_version'], _b(p['is_deleted']),
+          ],
+        );
+      }
+
+      for (final m in _list(body['menus'])) {
+        raw.execute(
+          'INSERT INTO menu (menu_no, name, name_ar, is_active, '
+          '  server_version, is_deleted) VALUES (?,?,?,?,?,?) '
+          'ON CONFLICT(menu_no) DO UPDATE SET '
+          '  name=excluded.name, name_ar=excluded.name_ar, '
+          '  is_active=excluded.is_active, '
+          '  server_version=excluded.server_version, '
+          '  is_deleted=excluded.is_deleted',
+          [
+            m['menu_no'], m['name'], m['name_ar'], _b(m['is_active']),
+            m['server_version'], _b(m['is_deleted']),
+          ],
+        );
+      }
+
+      for (final p in _list(body['menu_pages'])) {
+        raw.execute(
+          'INSERT INTO menu_page (id, menu_no, screen_no, pos_x, pos_y, '
+          '  sort_order, is_active, server_version, is_deleted) '
+          'VALUES (?,?,?,?,?,?,?,?,?) '
+          'ON CONFLICT(id) DO UPDATE SET '
+          '  menu_no=excluded.menu_no, screen_no=excluded.screen_no, '
+          '  pos_x=excluded.pos_x, pos_y=excluded.pos_y, '
+          '  sort_order=excluded.sort_order, is_active=excluded.is_active, '
+          '  server_version=excluded.server_version, '
+          '  is_deleted=excluded.is_deleted',
+          [
+            p['id'], p['menu_no'], p['screen_no'], p['pos_x'], p['pos_y'],
+            p['sort_order'] ?? 0, _b(p['is_active']), p['server_version'],
+            _b(p['is_deleted']),
           ],
         );
       }
@@ -168,14 +207,15 @@ class SyncService {
       for (final s in _list(body['menu_screens'])) {
         raw.execute(
           'INSERT INTO menu_screen (menu_id, name, name_ar, sort_order, '
-          '  buttons_across, buttons_down, is_modifier_screen, is_active, '
-          '  server_version, is_deleted) '
-          'VALUES (?,?,?,?,?,?,?,?,?,?) '
+          '  buttons_across, buttons_down, fore_color, back_color, '
+          '  is_modifier_screen, is_active, server_version, is_deleted) '
+          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?) '
           'ON CONFLICT(menu_id) DO UPDATE SET '
           '  name=excluded.name, name_ar=excluded.name_ar, '
           '  sort_order=excluded.sort_order, '
           '  buttons_across=excluded.buttons_across, '
           '  buttons_down=excluded.buttons_down, '
+          '  fore_color=excluded.fore_color, back_color=excluded.back_color, '
           '  is_modifier_screen=excluded.is_modifier_screen, '
           '  is_active=excluded.is_active, '
           '  server_version=excluded.server_version, '
@@ -183,6 +223,7 @@ class SyncService {
           [
             s['menu_id'], s['name'], s['name_ar'], s['sort_order'] ?? 0,
             s['buttons_across'], s['buttons_down'],
+            s['fore_color'], s['back_color'],
             _b(s['is_modifier_screen']), _b(s['is_active']),
             s['server_version'], _b(s['is_deleted']),
           ],
