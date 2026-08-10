@@ -238,6 +238,58 @@ void main() {
     );
   });
 
+  test('a database already holding tables is never rebuilt', () async {
+    // The create script must not run over an existing file. A till destroyed
+    // during testing is the reason this is pinned: the file it opened was
+    // judged fresh, the script ran, and a database with a day of sales in it
+    // would have gone the same way.
+    final dir = await Directory.systemTemp.createTemp('pos-notfresh');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/pos.db';
+
+    // Half-built: tables, but not the one the old check looked for.
+    final partial = sqlite3.open(path);
+    partial.execute('CREATE TABLE sync_state (table_name TEXT PRIMARY KEY, '
+        'last_version INTEGER NOT NULL DEFAULT 0, last_pulled_at TEXT)');
+    partial.execute("INSERT INTO sync_state (table_name, last_version) "
+        "VALUES ('catalog', 99)");
+    partial.dispose();
+
+    // It cannot be migrated either — the steps have nothing to alter — but it
+    // must fail loudly rather than silently become an empty new database.
+    expect(() => PosDatabase.openFile(path, loadSchema()), throwsA(anything));
+
+    final after = sqlite3.open(path);
+    addTearDown(after.dispose);
+    expect(
+      after.select("SELECT last_version FROM sync_state "
+          "WHERE table_name = 'catalog'").first['last_version'],
+      99,
+      reason: 'the existing file was overwritten',
+    );
+  });
+
+  test('a second app opening the same file does not rebuild it', () async {
+    final dir = await Directory.systemTemp.createTemp('pos-second');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/pos.db';
+
+    final first = PosDatabase.openFile(path, loadSchema());
+    addTearDown(first.dispose);
+    first.raw.execute("INSERT INTO product (prodnum, descript, price_a) "
+        "VALUES (2013, 'HUMMOS', 800)");
+
+    // Two copies of the app on one tablet: the second must find the first's
+    // database, not replace it.
+    final second = PosDatabase.openFile(path, loadSchema());
+    addTearDown(second.dispose);
+
+    expect(
+      second.raw.select('SELECT COUNT(*) AS n FROM product').first['n'],
+      1,
+    );
+  });
+
   test('a fresh file is stamped with the current version, not 1', () async {
     final dir = await Directory.systemTemp.createTemp('pos-fresh');
     addTearDown(() => dir.delete(recursive: true));

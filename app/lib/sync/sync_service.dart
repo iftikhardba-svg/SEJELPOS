@@ -186,12 +186,20 @@ class SyncService {
       }
 
       for (final p in _list(body['menu_pages'])) {
+        // Keyed on (menu, page), NOT on the id: the catalog contract does not
+        // carry an id for a placement, so every row arrived with a NULL one.
+        // SQLite allows NULLs in a TEXT primary key and no NULL equals
+        // another, so ON CONFLICT(id) matched nothing, the second pull of a
+        // menu hit UNIQUE(menu_no, screen_no) instead, and the exception took
+        // the whole catalog apply down — the device ended up with no catalog
+        // at all, not a stale menu. It went unseen because a device only pulls
+        // the same page twice after its watermark is reset.
         raw.execute(
           'INSERT INTO menu_page (id, menu_no, screen_no, pos_x, pos_y, '
           '  sort_order, is_active, server_version, is_deleted) '
           'VALUES (?,?,?,?,?,?,?,?,?) '
-          'ON CONFLICT(id) DO UPDATE SET '
-          '  menu_no=excluded.menu_no, screen_no=excluded.screen_no, '
+          'ON CONFLICT(menu_no, screen_no) DO UPDATE SET '
+          '  id=excluded.id, '
           '  pos_x=excluded.pos_x, pos_y=excluded.pos_y, '
           '  sort_order=excluded.sort_order, is_active=excluded.is_active, '
           '  server_version=excluded.server_version, '
@@ -396,6 +404,13 @@ class SyncService {
       }
 
       for (final pq in _list(body['product_questions'])) {
+        // Same trap as menu_page: UNIQUE(prodnum, slot) is what identifies the
+        // row here, and a server-side rebuild hands the same slot a new id.
+        raw.execute(
+          'DELETE FROM product_question WHERE prodnum = ? AND slot = ? '
+          '  AND id <> ?',
+          [pq['prodnum'], pq['slot'], pq['id']],
+        );
         raw.execute(
           'INSERT INTO product_question (id, prodnum, question_no, slot, '
           '  server_version, is_deleted) VALUES (?,?,?,?,?,?) '

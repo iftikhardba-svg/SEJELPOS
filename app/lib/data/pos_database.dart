@@ -264,15 +264,50 @@ class PosDatabase {
       {DeviceSigner? signer}) {
     final db = sqlite3.open(path);
     db.execute('PRAGMA foreign_keys = ON');
-    final fresh = db
-        .select("SELECT name FROM sqlite_master "
-            "WHERE type = 'table' AND name = 'product'")
-        .isEmpty;
-    if (fresh) {
-      db.execute(schemaSql);
-      db.execute('PRAGMA user_version = $tabletSchemaVersion');
-    } else {
-      migrateTabletSchema(db);
+    // Another process may hold the file — a second copy of the app, or the
+    // enrolment tool. Waiting is right; failing instantly is not.
+    db.execute('PRAGMA busy_timeout = 5000');
+
+    // Deciding whether this file is new, and building it if it is, happens
+    // inside ONE exclusive transaction. Two copies of the app starting
+    // together — a double-tapped icon — could otherwise both read an empty
+    // schema and both run the CREATE script, and that wipes a till which may
+    // be holding a day of sales that never reached the backend. A database
+    // was destroyed exactly this way while testing this build.
+    //
+    // The test is "has this file ANY table", not "has it a product table":
+    // a file left half-built by an interrupted first run has tables but no
+    // product, and running the create script over it is at best an error and
+    // at worst the same loss.
+    db.execute('BEGIN EXCLUSIVE');
+    bool fresh;
+    try {
+      fresh = db
+          .select("SELECT name FROM sqlite_master "
+              "WHERE type = 'table' AND name NOT LIKE 'sqlite_%' LIMIT 1")
+          .isEmpty;
+      if (fresh) {
+        db.execute(schemaSql);
+        db.execute('PRAGMA user_version = $tabletSchemaVersion');
+      }
+      db.execute('COMMIT');
+    } catch (_) {
+      db.execute('ROLLBACK');
+      // Close the handle before giving up. Leaving it open holds a lock on a
+      // database the caller has no reference to and cannot close.
+      db.dispose();
+      rethrow;
+    }
+
+    // Outside the transaction above: the migration runs one of its own, and a
+    // half-migrated tablet must be able to roll back on its own terms.
+    if (!fresh) {
+      try {
+        migrateTabletSchema(db);
+      } catch (_) {
+        db.dispose();
+        rethrow;
+      }
     }
     return PosDatabase(db, signer: signer);
   }

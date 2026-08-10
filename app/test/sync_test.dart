@@ -43,6 +43,22 @@ Map<String, dynamic> catalogFixture({int version = 7}) => {
           'is_deleted': false,
         },
       ],
+      'menus': [
+        {
+          'menu_no': 7, 'name': 'Default Menu', 'name_ar': null,
+          'is_active': true, 'server_version': 7, 'is_deleted': false,
+        },
+      ],
+      // No id: MenuPageOut does not carry one, and inventing one here is what
+      // let a real bug through — the fixture upserted on a key the wire never
+      // sends.
+      'menu_pages': [
+        {
+          'menu_no': 7, 'screen_no': 2010, 'pos_x': 1, 'pos_y': 1,
+          'sort_order': 0, 'is_active': true, 'server_version': 7,
+          'is_deleted': false,
+        },
+      ],
       'menu_screens': [
         {
           'menu_id': 2010, 'name': 'Appetizers', 'name_ar': null,
@@ -184,6 +200,10 @@ void main() {
       expect(db.productsForScreen(2010).length, 2);
       expect(
           db.raw.select('SELECT COUNT(*) AS n FROM menu_button').first['n'], 2);
+      // The second pull of a menu page used to raise a UNIQUE violation that
+      // aborted the entire apply, leaving the device with no catalog at all.
+      expect(
+          db.raw.select('SELECT COUNT(*) AS n FROM menu_page').first['n'], 1);
     });
 
     test('the prompts arrive with the products they belong to', () {
@@ -229,6 +249,31 @@ void main() {
             .first['n'],
         1,
       );
+    });
+
+    test('a row re-issued under a new id replaces the old one', () {
+      final s = service();
+      s.applyCatalog(catalogFixture());
+
+      // A catalog rebuilt on the server hands the same placement and the same
+      // prompt slot a new uuid. Keyed only by id, the insert hits the business
+      // -key unique index and takes the WHOLE catalog apply down with it — the
+      // device ends up with no catalog at all, not just a stale menu. Found on
+      // a real till whose menu had been reloaded on the backend.
+      final delta = catalogFixture(version: 10);
+      for (final row in (delta['product_questions'] as List)) {
+        (row as Map<String, dynamic>)['id'] =
+            'ffffffff-0000-4000-8000-${row['id'].toString().split('-').last}';
+      }
+
+      expect(() => s.applyCatalog(delta), returnsNormally);
+      expect(
+        db.raw.select('SELECT COUNT(*) AS n FROM product_question').first['n'],
+        1,
+        reason: 'the slot must be replaced, not doubled',
+      );
+      expect(db.questionsFor(2152).single.prompt, '1 DRINKS');
+      expect(db.defaultMenu()?.name, 'Default Menu');
     });
 
     test('a tombstone removes the product from the till', () {
