@@ -93,6 +93,17 @@ input[type=text], input[type=email], input[type=password], input[type=number], i
   font-size: 13px;
   margin-top: 12px;
 }
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 16px 0 0;
+  font-size: 14px;
+  color: var(--text);
+  cursor: pointer;
+}
+.check input { width: auto; margin: 0; }
+.fine { color: var(--muted); font-size: 12px; margin: 14px 0 0; line-height: 1.45; }
 
 /* ---- shell ---- */
 header {
@@ -172,6 +183,29 @@ input.price { width: 100px; text-align: right; font-variant-numeric: tabular-num
 }
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .row > div { flex: 1 1 150px; }
+/* ---- product master-detail ---- */
+.master { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .master { grid-template-columns: 1fr; } }
+.master .panel { margin-top: 0; }
+.list { max-height: 62vh; overflow-y: auto; }
+.listrow {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: 0; border-bottom: 1px solid var(--border); padding: 10px 16px;
+  color: inherit; font: inherit;
+}
+.listrow:hover { background: var(--bg); }
+.listrow.on { background: var(--accent-soft); }
+.listmain { display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+.listsub { display: flex; gap: 10px; font-size: 12px; margin-top: 2px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { margin: 0; }
+.hint { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.sub-head { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 26px 0 6px; }
+.prices { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+.prices input { text-align: right; font-variant-numeric: tabular-nums; }
+.checks { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.checks .check { margin: 0; }
+
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   background: var(--text); color: var(--bg);
@@ -184,15 +218,28 @@ input.price { width: 100px; text-align: right; font-variant-numeric: tabular-num
 <body>
 
 <section id="login">
-  <form class="card" id="loginForm">
+  <!-- A real form with named fields and an action, because that is what a
+       browser password manager looks for before it offers to save anything.
+       The submit is intercepted, but the shape has to be right. -->
+  <form class="card" id="loginForm" method="post" action="/office">
     <h1>POS Back Office</h1>
     <p class="sub">Sign in with the account your provider set up.</p>
     <label for="email">Email</label>
-    <input id="email" type="email" autocomplete="username" required>
+    <input id="email" name="username" type="email" autocomplete="username"
+           autocapitalize="none" spellcheck="false" required>
     <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" required>
-    <div style="margin-top:18px"><button class="btn" style="width:100%" id="loginBtn">Sign in</button></div>
+    <input id="password" name="password" type="password"
+           autocomplete="current-password" required>
+    <label class="check">
+      <input id="remember" type="checkbox">
+      <span>Keep me signed in on this device</span>
+    </label>
+    <div style="margin-top:18px"><button class="btn" style="width:100%" id="loginBtn" type="submit">Sign in</button></div>
     <div id="loginErr" class="err hidden"></div>
+    <p class="fine">
+      Your password is saved by the browser, not by this page. On a till or a
+      shared office machine, leave the box unticked.
+    </p>
   </form>
 </section>
 
@@ -221,11 +268,19 @@ input.price { width: 100px; text-align: right; font-variant-numeric: tabular-num
 <script>
 'use strict';
 
-// Session lives in sessionStorage, not localStorage: a shared back-office
-// machine in a restaurant should not keep someone signed in after the tab
-// closes.
+// Where the SESSION TOKEN lives — never the password. Storing a password in
+// the browser's storage would put a working credential in reach of any script
+// on the page; saving it is the password manager's job, which is why the form
+// above is a real form with autocomplete attributes.
+//
+// sessionStorage by default, so a shared back-office machine forgets when the
+// tab closes. "Keep me signed in" moves it to localStorage, which survives a
+// restart — but only until the token's own 12-hour expiry, which no checkbox
+// extends.
 const KEY = 'pos.office.token';
-let token = sessionStorage.getItem(KEY) || '';
+const store = () =>
+  localStorage.getItem(KEY) ? localStorage : sessionStorage;
+let token = localStorage.getItem(KEY) || sessionStorage.getItem(KEY) || '';
 let branches = [];
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -284,7 +339,11 @@ $('#loginForm').addEventListener('submit', async e => {
       body: JSON.stringify({ email: $('#email').value, password: $('#password').value }),
     });
     token = out.token;
-    sessionStorage.setItem(KEY, token);
+    // Write to one and clear the other, so unticking the box on a shared
+    // machine actually forgets rather than leaving a stale token behind.
+    const keep = $('#remember').checked;
+    (keep ? localStorage : sessionStorage).setItem(KEY, token);
+    (keep ? sessionStorage : localStorage).removeItem(KEY);
     await start(out);
   } catch (ex) {
     err.textContent = ex.message;
@@ -296,9 +355,13 @@ $('#loginForm').addEventListener('submit', async e => {
 
 function signOut() {
   token = '';
+  // Both, unconditionally: signing out has to mean signed out wherever the
+  // token happened to be kept.
+  localStorage.removeItem(KEY);
   sessionStorage.removeItem(KEY);
   $('#app').classList.add('hidden');
   $('#login').classList.remove('hidden');
+  $('#password').value = '';
 }
 $('#logout').addEventListener('click', e => { e.preventDefault(); signOut(); });
 
@@ -392,100 +455,350 @@ async function renderDashboard() {
 
 // --------------------------------------------------------------- products
 
-let productSearch = '', zeroOnly = false;
+// Master-detail, the shape of the product screen this replaces: a browsable
+// list on the left, one product open on the right. With 560 products a flat
+// table with inline price boxes stops being navigable.
+let productSearch = '', zeroOnly = false, categoryFilter = '';
+let selectedProductId = null;
+let categories = [], stations = [];
+
+const TIERS = 'abcdefghij'.split('');
+// Which tier a sale type charges is configured per type; A and B are the two
+// that carry the money at this customer, so they lead and are labelled.
+const TIER_LABEL = { a: 'A · Walk-in', b: 'B · Aggregator', j: 'J · Comp' };
 
 async function renderProducts() {
   loading('products');
   try {
+    if (!categories.length) {
+      try { categories = await api('/report-categories'); } catch { categories = []; }
+    }
+    if (!stations.length) {
+      try { stations = await api('/kitchen-stations'); } catch { stations = []; }
+    }
+
     const qs = new URLSearchParams();
     if (productSearch) qs.set('search', productSearch);
     if (zeroOnly) qs.set('only_zero_price', 'true');
+    if (categoryFilter) qs.set('report_no', categoryFilter);
     const rows = await api('/products' + (qs.toString() ? '?' + qs : ''));
 
-    const bar = el('div', { className: 'toolbar' });
-    const search = el('input', { type: 'search', placeholder: 'Search products…', value: productSearch });
-    search.addEventListener('change', () => { productSearch = search.value; renderProducts(); });
-    const zbtn = el('button', { className: 'btn small ' + (zeroOnly ? '' : 'ghost'),
-      textContent: 'Priced zero' });
-    zbtn.addEventListener('click', () => { zeroOnly = !zeroOnly; renderProducts(); });
-    bar.append(search, zbtn, el('span', { className: 'muted', textContent: rows.length + ' shown' }));
+    const wrap = el('div', { className: 'master' });
+    wrap.append(productList(rows), el('div', { id: 'productDetail' }));
+    into('products', wrap);
 
-    const table = el('table');
-    table.append(el('thead', {}, el('tr', {}, [
-      el('th', { textContent: '#' }),
-      el('th', { textContent: 'Product' }),
-      el('th', { className: 'num', textContent: 'Walk-in (A)' }),
-      el('th', { className: 'num', textContent: 'Aggregator (B)' }),
-      el('th', { textContent: 'Active' }),
-      el('th', { textContent: '' }),
-    ])));
-
-    const tb = el('tbody');
-    for (const p of rows) {
-      // Every control is named for its product. The column header alone is not
-      // enough: a screen reader on row 40 announces "edit text, 8.00" with no
-      // way to tell which item that is, and these edit real prices.
-      const a = el('input', { className: 'price', type: 'number', step: '0.01', min: '0',
-        value: money(p.price_a), ariaLabel: 'Walk-in price for ' + p.descript });
-      const b = el('input', { className: 'price', type: 'number', step: '0.01', min: '0',
-        value: p.price_b == null ? '' : money(p.price_b), placeholder: '—',
-        ariaLabel: 'Aggregator price for ' + p.descript });
-      const active = el('input', { type: 'checkbox', checked: p.is_active,
-        ariaLabel: p.descript + ' is available' });
-      const save = el('button', { className: 'btn small', textContent: 'Save',
-        ariaLabel: 'Save changes to ' + p.descript });
-
-      save.addEventListener('click', async () => {
-        const body = {};
-        const pa = parseMoney(a.value);
-        if (pa === null) return toast('Walk-in price must be a number');
-        if (pa !== p.price_a) body.price_a = pa;
-        if (b.value.trim() === '') {
-          if (p.price_b !== null) body.price_b = null;
-        } else {
-          const pb = parseMoney(b.value);
-          if (pb === null) return toast('Aggregator price must be a number');
-          if (pb !== p.price_b) body.price_b = pb;
-        }
-        if (active.checked !== p.is_active) body.is_active = active.checked;
-        if (!Object.keys(body).length) return toast('Nothing changed');
-
-        save.disabled = true;
-        try {
-          await api('/products/' + p.id, { method: 'PATCH', body: JSON.stringify(body) });
-          toast(p.descript + ' saved — tills will pull it on their next sync');
-          renderProducts();
-        } catch (ex) {
-          toast(ex.message);
-        } finally {
-          save.disabled = false;
-        }
-      });
-
-      tb.append(el('tr', {}, [
-        el('td', { className: 'muted', textContent: p.prodnum }),
-        el('td', {}, [
-          el('div', { textContent: p.descript }),
-          p.is_modifier ? el('div', { className: 'muted', style: 'font-size:12px', textContent: 'modifier' }) : el('span'),
-        ]),
-        el('td', { className: 'num' }, a),
-        el('td', { className: 'num' }, b),
-        el('td', {}, active),
-        el('td', {}, save),
-      ]));
+    if (selectedProductId && rows.some(r => r.id === selectedProductId)) {
+      openProduct(selectedProductId);
+    } else {
+      showDetailPlaceholder(rows.length);
     }
-    if (!rows.length) tb.append(el('tr', {}, el('td', { colSpan: 6, className: 'muted', textContent: 'Nothing matches.' })));
-    table.append(tb);
-
-    const p = el('section', { className: 'panel' }, [el('h2', { textContent: 'Products & prices' }), bar,
-      el('div', { className: 'scroll' }, table)]);
-    p.append(el('p', { className: 'note', textContent:
-      'Prices are VAT-inclusive, in SAR. Aggregator (B) is what Keeta, HungerStation and Jahez are ' +
-      'charged — the difference from walk-in is their commission. A product with no aggregator price ' +
-      'cannot be sold on an aggregator order at all: the till refuses it rather than quietly charging ' +
-      'the walk-in price.' }));
-    into('products', p);
   } catch (ex) { failed('products', ex); }
+}
+
+function productList(rows) {
+  const panel = el('section', { className: 'panel' },
+    [el('h2', { textContent: 'Products' })]);
+
+  const bar = el('div', { className: 'toolbar' });
+  const search = el('input', { type: 'search', value: productSearch,
+    placeholder: 'Name or number…', ariaLabel: 'Search products' });
+  search.addEventListener('change', () => {
+    productSearch = search.value; renderProducts();
+  });
+
+  const cat = el('select', { ariaLabel: 'Filter by report category' });
+  cat.append(el('option', { value: '', textContent: 'All categories' }));
+  for (const c of categories) {
+    cat.append(el('option', {
+      value: String(c.report_no),
+      textContent: `${c.name} (${c.product_count})`,
+      selected: String(c.report_no) === categoryFilter,
+    }));
+  }
+  cat.addEventListener('change', () => {
+    categoryFilter = cat.value; renderProducts();
+  });
+
+  const zbtn = el('button', { className: 'btn small ' + (zeroOnly ? '' : 'ghost'),
+    textContent: 'Priced zero' });
+  zbtn.addEventListener('click', () => { zeroOnly = !zeroOnly; renderProducts(); });
+
+  const add = el('button', { className: 'btn small', textContent: 'New product' });
+  add.addEventListener('click', () => openProduct(null));
+
+  bar.append(search, cat, zbtn, add);
+  panel.append(bar);
+
+  const list = el('div', { className: 'list' });
+  for (const p of rows) {
+    const row = el('button', {
+      className: 'listrow' + (p.id === selectedProductId ? ' on' : ''),
+    });
+    row.append(
+      el('div', { className: 'listmain' }, [
+        el('span', { textContent: p.descript }),
+        p.is_active ? el('span') :
+          el('span', { className: 'pill bad', textContent: 'inactive' }),
+      ]),
+      el('div', { className: 'listsub' }, [
+        el('span', { className: 'muted', textContent: '#' + p.prodnum }),
+        el('span', { className: 'muted', textContent: money(p.price_a) }),
+      ]),
+    );
+    row.addEventListener('click', () => {
+      selectedProductId = p.id;
+      document.querySelectorAll('.listrow.on')
+        .forEach(n => n.classList.remove('on'));
+      row.classList.add('on');
+      openProduct(p.id);
+    });
+    list.append(row);
+  }
+  if (!rows.length) {
+    list.append(el('p', { className: 'note', textContent: 'Nothing matches.' }));
+  }
+  panel.append(list);
+  panel.append(el('p', { className: 'note',
+    textContent: rows.length + ' shown' }));
+  return panel;
+}
+
+function showDetailPlaceholder(count) {
+  $('#productDetail').replaceChildren(
+    el('section', { className: 'panel' }, [
+      el('h2', { textContent: 'Product setup' }),
+      el('p', { className: 'note', textContent: count
+        ? 'Pick a product on the left, or add a new one.'
+        : 'No products match the current filter.' }),
+    ]),
+  );
+}
+
+async function openProduct(id) {
+  const host = $('#productDetail');
+  host.replaceChildren(el('p', { className: 'note', textContent: 'Loading…' }));
+
+  let p;
+  if (id) {
+    try { p = await api('/products/' + id); }
+    catch (ex) { return host.replaceChildren(
+      el('p', { className: 'err', textContent: ex.message })); }
+  } else {
+    // A blank product. price_a is required by the API, so it starts at zero
+    // and the zero-price filter will find it until someone sets it.
+    p = { prodnum: '', descript: '', descript_ar: '', print_des: '',
+          price_a: 0, tax_applies: true, is_weighed: false,
+          manual_price: false, is_modifier: false, is_active: true,
+          print_loc: 0, ref_code: '', unit_des: '', menu_ids: [] };
+    for (const t of TIERS) if (p['price_' + t] == null) p['price_' + t] = null;
+  }
+
+  const isNew = !id;
+  const fields = {};
+  const form = el('div', { className: 'body' });
+
+  const field = (label, control, hint) => {
+    const box = el('div', { className: 'field' });
+    box.append(el('label', { textContent: label }));
+    box.append(control);
+    if (hint) box.append(el('div', { className: 'hint', textContent: hint }));
+    return box;
+  };
+  const text = (key, value, opts = {}) => {
+    const input = el('input', Object.assign(
+      { type: 'text', value: value ?? '' }, opts));
+    fields[key] = input;
+    return input;
+  };
+
+  // ---- identity ----
+  const idRow = el('div', { className: 'row' });
+  idRow.append(
+    field('Product number', text('prodnum', p.prodnum,
+      { type: 'number', min: '1', disabled: !isNew }),
+      isNew ? 'Used by kitchen tickets and reports. Cannot be changed later.'
+            : 'Fixed once created.'),
+    field('Description', text('descript', p.descript)),
+  );
+  form.append(idRow);
+
+  const nameRow = el('div', { className: 'row' });
+  nameRow.append(
+    field('Arabic name', text('descript_ar', p.descript_ar),
+      'Printed on the receipt. ZATCA expects Arabic.'),
+    field('Kitchen ticket name', text('print_des', p.print_des),
+      'What the kitchen sees. Blank uses the description.'),
+  );
+  form.append(nameRow);
+
+  const metaRow = el('div', { className: 'row' });
+  const catSel = el('select');
+  catSel.append(el('option', { value: '', textContent: '— none —' }));
+  for (const c of categories) {
+    catSel.append(el('option', { value: String(c.report_no),
+      textContent: c.name, selected: c.report_no === p.report_no }));
+  }
+  fields.report_no = catSel;
+  metaRow.append(
+    field('Report category', catSel, 'What sales reports group this under.'),
+    field('Reference code', text('ref_code', p.ref_code)),
+    field('Unit', text('unit_des', p.unit_des), 'e.g. KG for weighed items.'),
+  );
+  form.append(metaRow);
+
+  // ---- pricing ----
+  form.append(el('h3', { className: 'sub-head', textContent: 'Pricing' }));
+  form.append(el('p', { className: 'hint', textContent:
+    'VAT-inclusive, in SAR. The sale type decides which tier is charged — ' +
+    'aggregators pay B, and the gap from A is their commission. Leaving B ' +
+    'empty does not fall back to A: the till refuses the sale instead.' }));
+
+  const priceGrid = el('div', { className: 'prices' });
+  for (const t of TIERS) {
+    const value = p['price_' + t];
+    const input = el('input', {
+      type: 'number', step: '0.01', min: '0',
+      value: value == null ? '' : money(value),
+      placeholder: t === 'a' ? '0.00' : '—',
+      ariaLabel: 'Price ' + t.toUpperCase(),
+    });
+    fields['price_' + t] = input;
+    priceGrid.append(field(TIER_LABEL[t] || t.toUpperCase(), input));
+  }
+  form.append(priceGrid);
+
+  // ---- routing ----
+  form.append(el('h3', { className: 'sub-head', textContent: 'Kitchen routing' }));
+  const routing = el('div', { className: 'checks' });
+  const stationBoxes = [];
+  for (const s of stations) {
+    const box = el('input', { type: 'checkbox',
+      checked: (p.print_loc & (1 << s.station_no)) !== 0,
+      ariaLabel: 'Send to ' + s.name });
+    stationBoxes.push({ box, station_no: s.station_no });
+    routing.append(el('label', { className: 'check' }, [box,
+      el('span', { textContent: s.name })]));
+  }
+  if (!stations.length) {
+    routing.append(el('p', { className: 'hint',
+      textContent: 'No kitchen stations configured for this branch.' }));
+  }
+  form.append(routing);
+  form.append(el('p', { className: 'hint', textContent:
+    'Station numbers are the printer ports carried over from the old system, ' +
+    'so imported routing keeps working. Nothing ticked means no kitchen ticket.' }));
+
+  // ---- flags ----
+  form.append(el('h3', { className: 'sub-head', textContent: 'Behaviour' }));
+  const flags = el('div', { className: 'checks' });
+  const flag = (key, label, hint) => {
+    const box = el('input', { type: 'checkbox', checked: !!p[key],
+      ariaLabel: label });
+    fields[key] = box;
+    flags.append(el('label', { className: 'check', title: hint || '' },
+      [box, el('span', { textContent: label })]));
+  };
+  flag('is_active', 'Available on tills');
+  flag('tax_applies', 'VAT applies');
+  flag('is_weighed', 'Sold by weight');
+  flag('manual_price', 'Price typed at the till');
+  flag('is_modifier', 'Modifier, not a menu item');
+  form.append(flags);
+
+  // ---- where it appears ----
+  if (!isNew) {
+    form.append(el('h3', { className: 'sub-head', textContent: 'On menu screens' }));
+    form.append(el('p', { className: 'hint', textContent: p.menu_ids.length
+      ? 'Screens ' + p.menu_ids.join(', ') +
+        '. Moving buttons is a menu-layout job, not done here.'
+      : 'Not on any menu screen, so no till can ring it.' }));
+  }
+
+  // ---- save ----
+  const save = el('button', { className: 'btn',
+    textContent: isNew ? 'Create product' : 'Save changes' });
+  const actions = el('div', { style: 'margin-top:20px; display:flex; gap:8px' });
+  actions.append(save);
+  if (!isNew) {
+    const cancel = el('button', { className: 'btn ghost', textContent: 'Revert' });
+    cancel.addEventListener('click', () => openProduct(id));
+    actions.append(cancel);
+  }
+  form.append(actions);
+
+  save.addEventListener('click', async () => {
+    const body = {};
+    const put = (key, value) => { if (isNew || value !== p[key]) body[key] = value; };
+
+    if (isNew) {
+      const num = Number(fields.prodnum.value);
+      if (!Number.isInteger(num) || num < 1) {
+        return toast('Product number must be a whole number');
+      }
+      body.prodnum = num;
+    }
+    if (!fields.descript.value.trim()) return toast('Description is required');
+    put('descript', fields.descript.value.trim());
+
+    for (const key of ['descript_ar', 'print_des', 'ref_code', 'unit_des']) {
+      put(key, fields[key].value.trim() || null);
+    }
+    body.report_no = fields.report_no.value ? Number(fields.report_no.value) : null;
+
+    for (const t of TIERS) {
+      const raw = fields['price_' + t].value.trim();
+      if (raw === '') {
+        if (t === 'a') return toast('Walk-in price (A) is required');
+        put('price_' + t, null);
+      } else {
+        const halalas = parseMoney(raw);
+        if (halalas === null) return toast(`Price ${t.toUpperCase()} must be a number`);
+        put('price_' + t, halalas);
+      }
+    }
+
+    let printLoc = 0;
+    for (const { box, station_no } of stationBoxes) {
+      if (box.checked) printLoc |= (1 << station_no);
+    }
+    // Bits for ports with no configured station are preserved, so editing a
+    // product does not quietly unroute it from a station nobody has named.
+    const known = stations.reduce((m, s) => m | (1 << s.station_no), 0);
+    put('print_loc', printLoc | (p.print_loc & ~known));
+
+    for (const key of ['is_active', 'tax_applies', 'is_weighed',
+                       'manual_price', 'is_modifier']) {
+      put(key, fields[key].checked);
+    }
+
+    if (!isNew && !Object.keys(body).length) return toast('Nothing changed');
+
+    save.disabled = true;
+    try {
+      if (isNew) {
+        const made = await api('/products', {
+          method: 'POST', body: JSON.stringify(body) });
+        selectedProductId = made.id;
+        toast(made.descript + ' created — put it on a menu screen to sell it');
+      } else {
+        await api('/products/' + id, {
+          method: 'PATCH', body: JSON.stringify(body) });
+        toast('Saved — tills will pull it on their next sync');
+      }
+      categories = [];
+      await renderProducts();
+    } catch (ex) {
+      toast(ex.message);
+    } finally {
+      save.disabled = false;
+    }
+  });
+
+  host.replaceChildren(el('section', { className: 'panel' }, [
+    el('h2', { textContent: isNew ? 'New product'
+      : `${p.descript}  ·  #${p.prodnum}` }),
+    form,
+  ]));
 }
 
 // ---------------------------------------------------------------- devices
@@ -610,6 +923,9 @@ async function renderSales() {
 // ------------------------------------------------------------------- boot
 
 (async () => {
+  // Reflect where the token was found, so the box matches reality rather
+  // than resetting to unticked on every visit.
+  $('#remember').checked = !!localStorage.getItem(KEY);
   if (!token) return;
   try { await start(await api('/me')); } catch { signOut(); }
 })();

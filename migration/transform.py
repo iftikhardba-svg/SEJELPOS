@@ -110,6 +110,30 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
     for b in src["menu_buttons"]:
         prod_cats.setdefault(b["PRODNUM"], set()).add(b["ORDERCAT"])
 
+    # ---- report categories -----------------------------------------------
+    # PixelPoint's "Report Cat" — what every sales report groups by, and the
+    # only real organising idea the menu has. Product.REPORTNO points here.
+    report_categories = []
+    known_report_nos = set()
+    for c in src.get("report_categories", []):
+        report_no = c["REPORTNO"]
+        known_report_nos.add(report_no)
+        report_categories.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "company_id": company_id,
+            "report_no": report_no,
+            "name": (c["DESCRIPT"] or "").strip(),
+            "name_ar": None,
+            # The category's own routing default. Products carry their own
+            # PRINTLOC and that is what actually routes; this is kept so a
+            # back office can show what the category intended.
+            "default_print_loc": c.get("PRINTLOC") or 0,
+            "sort_order": c.get("PrintPriority") or 0,
+            "is_active": truthy(c["ISACTIVE"]),
+            "is_deleted": False,
+        })
+
     # ---- products ---------------------------------------------------------
     products = []
     prod_by_num: dict[int, dict] = {}
@@ -147,6 +171,12 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "price_h": to_halalas(p.get("PRICEH")),
             "price_i": to_halalas(p.get("PRICEI")),
             "price_j": to_halalas(p.get("PRICEJ")),
+            # REPORTNO is the "Report Cat" a human sets on the product screen.
+            # PRODTYPE is a different, near-empty column that was mistaken for
+            # it on the first pass — kept because it costs nothing, but it is
+            # not the category.
+            "report_no": p.get("REPORTNO")
+            if p.get("REPORTNO") in known_report_nos else None,
             "prodtype": p["PRODTYPE"],
             # TEXEMPT marks a product exempt from tax; TAX1 marks VAT applicable.
             "tax_applies": truthy(p["TAX1"]) and not truthy(p["TEXEMPT"]),
@@ -447,6 +477,7 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         "branch_id": branch_id,
         "vat_percent": str(vat),
         "menu_screens": menu_screens,
+        "report_categories": report_categories,
         "products": products,
         "menu_buttons": menu_buttons,
         "pay_methods": pay_methods,

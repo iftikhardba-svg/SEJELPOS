@@ -81,12 +81,25 @@ def _clean(v):
 # configuration into a schema that has no use for it.
 
 Q_PRODUCTS = """
-SELECT PRODNUM, DESCRIPT, PRINTDES, REFCODE, UnitDes,
+SELECT PRODNUM, DESCRIPT, PRINTDES, PrintDes2, REFCODE, UnitDes,
        PRICEA, PRICEB, PRICEC, PRICED, PRICEE,
        PRICEF, PRICEG, PRICEH, PRICEI, PRICEJ,
-       PRODTYPE, TAX1, TEXEMPT,
+       REPORTNO, PRODTYPE, TAX1, TEXEMPT,
        ISWEIGHED, ManualPrice, ISACTIVE, PRINTLOC
 FROM DBA.Product
+"""
+
+# The menu's own organising idea: "Report Cat" on PixelPoint's product screen.
+# REPORTNO on Product points here, and it is what every sales report groups by.
+#
+# This was missed on the first pass, which took PRODTYPE for the category — a
+# different column that is 0 on 536 of 560 products. The names never arrived,
+# so the back office had nothing to group or filter by. ReportCat carries its
+# own PRINTLOC as a default for its members; the product's own PRINTLOC is
+# what actually routes, so the category's is imported for reference only.
+Q_REPORT_CATEGORIES = """
+SELECT REPORTNO, DESCRIPT, PRINTLOC, ISACTIVE, PrintPriority
+FROM DBA.ReportCat
 """
 
 # Kitchen stations. PRINTLOC on a product is a bitmask over these port
@@ -181,6 +194,7 @@ def extract(con) -> dict:
         "extracted_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "counts": counts,
         "products": rows(con, Q_PRODUCTS),
+        "report_categories": rows(con, Q_REPORT_CATEGORIES),
         "categories": rows(con, Q_CATEGORIES),
         "menu_buttons": rows(con, Q_MENU_BUTTONS),
         "category_positions": rows(con, Q_CATEGORY_POSITIONS),

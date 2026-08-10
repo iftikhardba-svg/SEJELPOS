@@ -175,6 +175,20 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
                     "server_version": lambda r: version,
                 })
 
+            counts["report_categories"] = await upsert(
+                m.ReportCategory, data.get("report_categories", []),
+                ["report_no"], {
+                    "company_id": lambda r: cid,
+                    "report_no": lambda r: _int(r["report_no"]),
+                    "name": lambda r: r["name"],
+                    "name_ar": lambda r: r.get("name_ar"),
+                    "default_print_loc": lambda r: _int(r.get("default_print_loc")),
+                    "sort_order": lambda r: _int(r.get("sort_order")),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
             counts["products"] = await upsert(
                 m.Product, data["products"], ["prodnum"], {
                     "branch_id": lambda r: bid,
@@ -187,6 +201,7 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
                         for c in "abcdefghij"
                     },
                     "price_a": lambda r: _int(r.get("price_a")),
+                    "report_no": lambda r: r.get("report_no"),
                     "prodtype": lambda r: r.get("prodtype"),
                     "tax_applies": lambda r: _bool(r.get("tax_applies"), True),
                     "is_weighed": lambda r: _bool(r.get("is_weighed")),

@@ -22,7 +22,7 @@ import secrets
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from ..config import settings
 from ..db import SessionLocal, tenant_session
@@ -32,8 +32,11 @@ from ..models import (
     Company,
     Device,
     EnrolmentCode,
+    KitchenStation,
+    MenuButton,
     MenuScreen,
     Product,
+    ReportCategory,
     Sale,
     SalesType,
 )
@@ -44,11 +47,13 @@ from ..office_auth import (
     verify_password,
 )
 from ..schemas import (
+    PRICE_TIERS,
     OfficeDashboard,
     OfficeDeviceOut,
     OfficeEnrolmentOut,
     OfficeLoginIn,
     OfficeLoginOut,
+    OfficeProductCreate,
     OfficeProductOut,
     OfficeProductUpdate,
     OfficeSaleOut,
@@ -76,7 +81,7 @@ async def _next_catalog_version(session, tenant_id: uuid.UUID) -> int:
     a product edit hide behind a higher menu version.
     """
     highest = 0
-    for model in (Product, MenuScreen, SalesType):
+    for model in (Product, MenuScreen, SalesType, ReportCategory):
         value = (
             await session.execute(
                 select(func.max(model.server_version)).where(
@@ -286,27 +291,97 @@ async def dashboard(
 # Products and prices
 # --------------------------------------------------------------------------
 
-def _product_out(p: Product) -> OfficeProductOut:
+def _product_out(p: Product, menu_ids: list[int] | None = None) -> OfficeProductOut:
     return OfficeProductOut(
         id=p.id,
         prodnum=p.prodnum,
         descript=p.descript,
         descript_ar=p.descript_ar,
-        price_a=p.price_a,
-        price_b=p.price_b,
-        price_j=p.price_j,
+        print_des=p.print_des,
         tax_applies=p.tax_applies,
-        is_active=p.is_active,
+        is_weighed=p.is_weighed,
+        manual_price=p.manual_price,
         is_modifier=p.is_modifier,
+        is_active=p.is_active,
         print_loc=p.print_loc,
+        report_no=p.report_no,
+        prodtype=p.prodtype,
+        ref_code=p.ref_code,
+        unit_des=p.unit_des,
         server_version=p.server_version,
+        menu_ids=menu_ids or [],
+        **{f"price_{t}": getattr(p, f"price_{t}") for t in PRICE_TIERS},
     )
+
+
+@router.get("/report-categories")
+async def list_report_categories(ctx: OfficeContext = OfficeDep) -> list[dict]:
+    """What sales reports group by, and how a 560-product menu is navigated."""
+    async with tenant_session(ctx.tenant_id) as session:
+        rows = (
+            await session.execute(
+                select(ReportCategory)
+                .where(
+                    ReportCategory.tenant_id == ctx.tenant_id,
+                    ReportCategory.is_deleted.is_(False),
+                )
+                .order_by(ReportCategory.name)
+            )
+        ).scalars().all()
+
+        counts = dict(
+            (
+                await session.execute(
+                    select(Product.report_no, func.count(Product.id))
+                    .where(
+                        Product.tenant_id == ctx.tenant_id,
+                        Product.is_deleted.is_(False),
+                    )
+                    .group_by(Product.report_no)
+                )
+            ).all()
+        )
+
+    return [
+        {
+            "report_no": c.report_no,
+            "name": c.name,
+            "name_ar": c.name_ar,
+            "is_active": c.is_active,
+            "default_print_loc": c.default_print_loc,
+            "product_count": counts.get(c.report_no, 0),
+        }
+        for c in rows
+    ]
+
+
+@router.get("/kitchen-stations")
+async def list_kitchen_stations(ctx: OfficeContext = OfficeDep) -> list[dict]:
+    """Station numbers ARE printer ports, so a product's print_loc bitmask can
+    be edited as names instead of a number nobody can read."""
+    async with tenant_session(ctx.tenant_id) as session:
+        rows = (
+            await session.execute(
+                select(KitchenStation)
+                .where(
+                    KitchenStation.tenant_id == ctx.tenant_id,
+                    KitchenStation.is_deleted.is_(False),
+                )
+                .order_by(KitchenStation.station_no)
+            )
+        ).scalars().all()
+    return [
+        {"station_no": s.station_no, "name": s.name, "is_active": s.is_active}
+        for s in rows
+    ]
 
 
 @router.get("/products", response_model=list[OfficeProductOut])
 async def list_products(
     search: str = "",
     only_zero_price: bool = False,
+    report_no: int | None = None,
+    include_inactive: bool = True,
     limit: int = Query(default=200, le=1000),
     ctx: OfficeContext = OfficeDep,
 ) -> list[OfficeProductOut]:
@@ -319,7 +394,17 @@ async def list_products(
             Product.is_deleted.is_(False),
         )
         if search.strip():
-            stmt = stmt.where(Product.descript.ilike(f"%{search.strip()}%"))
+            term = f"%{search.strip()}%"
+            # Number as well as name: staff know items by their prodnum, and
+            # it is what the kitchen tickets and the old system show.
+            conditions = [Product.descript.ilike(term)]
+            if search.strip().isdigit():
+                conditions.append(Product.prodnum == int(search.strip()))
+            stmt = stmt.where(or_(*conditions))
+        if report_no is not None:
+            stmt = stmt.where(Product.report_no == report_no)
+        if not include_inactive:
+            stmt = stmt.where(Product.is_active.is_(True))
         if only_zero_price:
             stmt = stmt.where(
                 Product.price_a == 0,
@@ -330,6 +415,82 @@ async def list_products(
         rows = list((await session.execute(stmt)).scalars().all())
 
     return [_product_out(p) for p in rows]
+
+
+@router.get("/products/{product_id}", response_model=OfficeProductOut)
+async def get_product(
+    product_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeProductOut:
+    """One product, with the menu screens it appears on."""
+    async with tenant_session(ctx.tenant_id) as session:
+        product = (
+            await session.execute(
+                select(Product).where(
+                    Product.id == product_id,
+                    Product.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if product is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such product")
+
+        menu_ids = list(
+            (
+                await session.execute(
+                    select(MenuButton.menu_id).where(
+                        MenuButton.tenant_id == ctx.tenant_id,
+                        MenuButton.prodnum == product.prodnum,
+                        MenuButton.is_deleted.is_(False),
+                    ).distinct()
+                )
+            ).scalars().all()
+        )
+
+    return _product_out(product, menu_ids)
+
+
+@router.post("/products", response_model=OfficeProductOut, status_code=201)
+async def create_product(
+    body: OfficeProductCreate,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeProductOut:
+    """Add a product.
+
+    A new product is not on any menu screen yet, so no till will show it until
+    someone puts a button on one. That is deliberate: silently placing it
+    somewhere would move a button under a cashier's finger mid-service.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        clash = (
+            await session.execute(
+                select(Product).where(
+                    Product.tenant_id == ctx.tenant_id,
+                    Product.prodnum == body.prodnum,
+                )
+            )
+        ).scalar_one_or_none()
+        if clash is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"product number {body.prodnum} is already {clash.descript}",
+            )
+
+        branch = (
+            await session.execute(
+                select(Branch.id).where(Branch.tenant_id == ctx.tenant_id)
+            )
+        ).scalars().first()
+
+        product = Product(
+            tenant_id=ctx.tenant_id,
+            branch_id=branch,
+            server_version=await _next_catalog_version(session, ctx.tenant_id),
+            **body.model_dump(),
+        )
+        session.add(product)
+        await session.flush()
+        return _product_out(product)
 
 
 @router.patch("/products/{product_id}", response_model=OfficeProductOut)

@@ -242,6 +242,9 @@ class Product(Base):
     price_h: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     price_i: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     price_j: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # -> ReportCategory.report_no. Nullable because a product may reference a
+    # category that no longer exists in the source.
+    report_no: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     prodtype: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tax_applies: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
     is_weighed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
@@ -253,6 +256,45 @@ class Product(Base):
     print_loc: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
     ref_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     unit_des: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
+class ReportCategory(Base):
+    """PixelPoint's "Report Cat" — what sales reports group by.
+
+    Distinct from a menu screen: a screen is where a button sits on a till, a
+    report category is what the item IS. An item can appear on several screens
+    and belongs to exactly one category.
+
+    Missed on the first migration pass, which took `Product.PRODTYPE` for the
+    category — a different column that is 0 on 536 of 560 products. The real
+    link is `Product.REPORTNO`, and without it the back office had nothing to
+    group or filter a 560-product menu by.
+    """
+
+    __tablename__ = "report_category"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "company_id", "report_no"),
+        Index("ix_report_category_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    company_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("company.id"), nullable=True
+    )
+    report_no: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(Text)
+    name_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The category's own kitchen-routing default. Products carry their own
+    # print_loc and that is what actually routes; this records what the
+    # category intended, which is useful when a product looks misrouted.
+    default_print_loc: Mapped[int] = mapped_column(
+        Integer, default=0, server_default=sa_text("0")
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
     server_version: Mapped[int] = mapped_column(BigInteger, index=True)

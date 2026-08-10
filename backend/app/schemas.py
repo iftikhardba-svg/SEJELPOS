@@ -525,19 +525,45 @@ class OfficeDashboard(BaseModel):
     by_sale_type: list[dict]
 
 
+# Price tiers A-J. All ten exist in the source catalog and all ten are
+# editable: which one applies is decided by the sale type, so a tier nobody
+# uses today becomes load-bearing the day an aggregator is added.
+PRICE_TIERS = tuple("abcdefghij")
+
+
 class OfficeProductOut(BaseModel):
     id: uuid.UUID
     prodnum: int
     descript: str
     descript_ar: str | None = None
+    print_des: str | None = None
     price_a: int
     price_b: int | None = None
+    price_c: int | None = None
+    price_d: int | None = None
+    price_e: int | None = None
+    price_f: int | None = None
+    price_g: int | None = None
+    price_h: int | None = None
+    price_i: int | None = None
     price_j: int | None = None
     tax_applies: bool
-    is_active: bool
+    is_weighed: bool
+    manual_price: bool
     is_modifier: bool
+    is_active: bool
+    # Kitchen routing bitmask carried over from PixelPoint's PRINTLOC: bit n
+    # means the item goes to the station on printer port n.
     print_loc: int
+    # -> ReportCategory.report_no. What sales reports group this under.
+    report_no: int | None = None
+    prodtype: int | None = None
+    ref_code: str | None = None
+    unit_des: str | None = None
     server_version: int
+    # Which menu screens this product sits on. Read-only here - moving
+    # buttons around is a menu-layout job, not a product one.
+    menu_ids: list[int] = Field(default_factory=list)
 
 
 class OfficeProductUpdate(BaseModel):
@@ -550,11 +576,52 @@ class OfficeProductUpdate(BaseModel):
 
     descript: str | None = Field(default=None, min_length=1)
     descript_ar: str | None = None
+    print_des: str | None = None
     price_a: int | None = Field(default=None, ge=0)
     price_b: int | None = Field(default=None, ge=0)
+    price_c: int | None = Field(default=None, ge=0)
+    price_d: int | None = Field(default=None, ge=0)
+    price_e: int | None = Field(default=None, ge=0)
+    price_f: int | None = Field(default=None, ge=0)
+    price_g: int | None = Field(default=None, ge=0)
+    price_h: int | None = Field(default=None, ge=0)
+    price_i: int | None = Field(default=None, ge=0)
     price_j: int | None = Field(default=None, ge=0)
     tax_applies: bool | None = None
+    is_weighed: bool | None = None
+    manual_price: bool | None = None
+    is_modifier: bool | None = None
     is_active: bool | None = None
+    print_loc: int | None = Field(default=None, ge=0)
+    report_no: int | None = Field(default=None, ge=0)
+    prodtype: int | None = Field(default=None, ge=0)
+    ref_code: str | None = None
+    unit_des: str | None = None
+
+
+class OfficeProductCreate(BaseModel):
+    """A new product.
+
+    `prodnum` is chosen by the caller rather than generated: it is the key the
+    tills, the kitchen routing and the imported PixelPoint history all use, so
+    it has to be a number a human can recognise and reuse.
+    """
+
+    prodnum: int = Field(ge=1)
+    descript: str = Field(min_length=1)
+    descript_ar: str | None = None
+    print_des: str | None = None
+    price_a: int = Field(ge=0)
+    price_b: int | None = Field(default=None, ge=0)
+    price_j: int | None = Field(default=None, ge=0)
+    tax_applies: bool = True
+    is_weighed: bool = False
+    manual_price: bool = False
+    is_modifier: bool = False
+    print_loc: int = Field(default=0, ge=0)
+    report_no: int | None = Field(default=None, ge=0)
+    ref_code: str | None = None
+    unit_des: str | None = None
 
 
 class OfficeDeviceOut(BaseModel):
