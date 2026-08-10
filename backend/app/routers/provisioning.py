@@ -188,11 +188,16 @@ async def next_order_number(
     body: OrderNumberIn,
     ctx: DeviceContext = Depends(current_device),
 ) -> OrderNumberOut:
-    """Allocate the next customer-facing order number for the branch and day.
+    """Reserve a run of customer-facing order numbers for the branch and day.
 
-    One atomic upsert, so two tills asking at the same moment get different
-    numbers. `next_number` stores what the *next* caller will receive; the
-    returned number is the value before the increment.
+    One atomic upsert, so two tills asking at the same moment get disjoint
+    runs. `next_number` stores what the *next* caller will receive, so the
+    first number of this caller's run is the value after the increment minus
+    the size of the run.
+
+    Devices reserve a block and hand out from it locally. That is what lets a
+    till keep calling out order numbers with no network, without two tills at
+    one counter ever landing on the same number.
     """
     async with tenant_session(ctx.tenant_id) as session:
         dialect = session.bind.dialect.name
@@ -205,11 +210,11 @@ async def next_order_number(
             tenant_id=ctx.tenant_id,
             branch_id=ctx.branch_id,
             business_date=body.business_date,
-            next_number=2,
+            next_number=1 + body.count,
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["tenant_id", "branch_id", "business_date"],
-            set_={"next_number": OrderNumberCounter.next_number + 1},
+            set_={"next_number": OrderNumberCounter.next_number + body.count},
         ).returning(OrderNumberCounter.next_number)
 
         # SQLite needs the row's id supplied (no server-side uuid default).
@@ -220,5 +225,6 @@ async def next_order_number(
         next_val = (await session.execute(stmt)).scalar_one()
         return OrderNumberOut(
             business_date=body.business_date,
-            order_no=next_val - 1,
+            order_no=next_val - body.count,
+            count=body.count,
         )

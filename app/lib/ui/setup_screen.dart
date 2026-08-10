@@ -100,7 +100,7 @@ class _SetupScreenState extends State<SetupScreen> {
         brandName: (_device()['zatca_seller_name'] as String?) ?? 'POS',
         vatNumber: (_device()['zatca_vat_number'] as String?) ?? '',
         receiptNo: 'TEST',
-        orderNo: 0,
+        orderNo: null,
         dateTime: DateTime.now(),
         lines: [ReceiptLine(qty: 1, name: 'PRINTER TEST', amount: 0)],
         netTotal: 0,

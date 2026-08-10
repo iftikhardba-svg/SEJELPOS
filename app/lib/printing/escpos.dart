@@ -48,7 +48,11 @@ class ReceiptData {
   final String brandName;
   final String vatNumber;
   final String receiptNo;
-  final int? orderNo;
+
+  /// Printed as given, because it is what the customer was told out loud. A
+  /// provisional number carries its device prefix ("R01-205"), so this is a
+  /// string rather than an int.
+  final String? orderNo;
   final DateTime dateTime;
   final List<ReceiptLine> lines;
   final int netTotal;

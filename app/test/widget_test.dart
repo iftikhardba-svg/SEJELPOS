@@ -53,7 +53,9 @@ void main() {
     await tester.tap(find.textContaining('Charge '));
     await tester.pumpAndSettle();
 
-    expect(find.text('Order 1'), findsOneWidget);
+    // A demo till has no backend to reserve numbers from, so what it calls
+    // out is qualified by the device — no other till could produce 'T01-1'.
+    expect(find.text('Order T01-1'), findsOneWidget);
     expect(find.textContaining('Receipt T01-000001'), findsOneWidget);
 
     await tester.tap(find.text('Next customer'));
@@ -61,8 +63,14 @@ void main() {
 
     // Cart cleared, order number advanced, and the sale is really in the DB.
     expect(find.text('Tap an item to start'), findsOneWidget);
-    expect(find.text('ORDER 2'), findsOneWidget);
+    expect(find.text('ORDER T01-2'), findsOneWidget);
     expect(db.outboxDepth(), 1);
+
+    // The number the customer was told is the one stored against the sale.
+    final saleUuid = db.raw
+        .select('SELECT sale_uuid FROM sale')
+        .first['sale_uuid'] as String;
+    expect(db.saleRow(saleUuid)['order_no'], 1);
   });
 
   testWidgets('aggregator type demands the reference before charging',

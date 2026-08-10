@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'data/pos_database.dart';
+import 'sync/order_numbers.dart';
 import 'sync/sync_api.dart';
 import 'sync/sync_service.dart';
 import 'sync/sync_worker.dart';
@@ -50,6 +51,7 @@ class PosApp extends StatefulWidget {
 class _PosAppState extends State<PosApp> {
   late bool _ready;
   SyncWorker? _worker;
+  OrderNumbers? _orderNumbers;
 
   @override
   void initState() {
@@ -107,14 +109,21 @@ class _PosAppState extends State<PosApp> {
       // An enrolled till syncs in the background; the demo till has no
       // backend and no worker — and no timers to leak in tests.
       if (token != null && baseUrl != null && _worker == null) {
-        final service = SyncService(
-          db: widget.db,
-          api: SyncApi(baseUrl: baseUrl, token: token),
-        );
+        final api = SyncApi(baseUrl: baseUrl, token: token);
+        final service = SyncService(db: widget.db, api: api);
         _worker = SyncWorker(sync: service)
           ..start(interval: const Duration(seconds: 30));
+        _orderNumbers = OrderNumbers(db: widget.db, api: api);
       }
-      return TillScreen(db: widget.db, worker: _worker);
+      // The demo till still gets numbers, just device-prefixed ones: it has
+      // no backend to reserve from, and a counter with no number to call is
+      // not a counter.
+      _orderNumbers ??= OrderNumbers(db: widget.db);
+      return TillScreen(
+        db: widget.db,
+        worker: _worker,
+        orderNumbers: _orderNumbers,
+      );
     }
 
     final api = SyncApi(baseUrl: baseUrl ?? '', token: token);

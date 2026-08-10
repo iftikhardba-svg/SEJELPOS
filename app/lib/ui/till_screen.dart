@@ -16,6 +16,7 @@ import '../core/pricing.dart';
 import '../data/pos_database.dart';
 import '../printing/escpos.dart';
 import '../printing/printer.dart';
+import '../sync/order_numbers.dart';
 import '../sync/sync_worker.dart';
 import 'setup_screen.dart';
 
@@ -25,9 +26,15 @@ class TillScreen extends StatefulWidget {
     required this.db,
     this.worker,
     this.sendBytes,
+    this.orderNumbers,
   });
 
   final PosDatabase db;
+
+  /// Allocates the customer-facing order number. Null on the demo path,
+  /// where the till shows no number rather than inventing one that a second
+  /// device could also invent.
+  final OrderNumbers? orderNumbers;
 
   /// Present when the device is enrolled; a charge nudges a sync pass so the
   /// kitchen sees the ticket within seconds, not at the next timer tick.
@@ -49,7 +56,11 @@ class _TillScreenState extends State<TillScreen> {
 
   final List<CartLine> _cart = [];
   final _refController = TextEditingController();
-  int _orderNo = 1;
+
+  /// The number waiting to be called out for the sale being rung. Reserved
+  /// from the backend in blocks — never counted locally, or two tills at one
+  /// counter would call the same number to different customers.
+  OrderNumber? _pending;
 
   @override
   void initState() {
@@ -59,6 +70,20 @@ class _TillScreenState extends State<TillScreen> {
     _salesType = _salesTypes.first;
     _activeMenu = _screens.first.menuId;
     _items = widget.db.productsForScreen(_activeMenu);
+    unawaited(_takeOrderNumber());
+  }
+
+  /// Held before the sale, not after, so the number is on screen while the
+  /// order is being rung and the cashier can say it as they take the money.
+  Future<void> _takeOrderNumber() async {
+    final order = await widget.orderNumbers?.next(DateTime.now());
+    if (mounted) setState(() => _pending = order);
+  }
+
+  String get _orderLabel {
+    final order = _pending;
+    if (order == null) return '—';
+    return widget.orderNumbers?.format(order) ?? '${order.number}';
   }
 
   @override
@@ -124,23 +149,25 @@ class _TillScreenState extends State<TillScreen> {
         externalRef: _salesType.requiresExternalRef
             ? _refController.text.trim()
             : null,
-        orderNo: _orderNo,
+        orderNo: _pending?.number,
       );
     } on Exception catch (e) {
       _toast('$e');
       return;
     }
 
-    final completedOrder = _orderNo;
+    final completedOrder = _orderLabel;
     setState(() {
       _cart.clear();
       _refController.clear();
-      _orderNo += 1;
     });
+    // The next customer's number is reserved now, so it is on screen before
+    // they have finished ordering.
+    unawaited(_takeOrderNumber());
 
     // Paper and kitchen happen off the critical path: the cashier moves to
     // the next customer whether or not the printer answers.
-    unawaited(_printReceipt(sale, methodName));
+    unawaited(_printReceipt(sale, methodName, completedOrder));
     unawaited(widget.worker?.syncNow());
 
     showDialog<void>(
@@ -171,7 +198,8 @@ class _TillScreenState extends State<TillScreen> {
     );
   }
 
-  Future<void> _printReceipt(CompletedSale sale, String methodName) async {
+  Future<void> _printReceipt(
+      CompletedSale sale, String methodName, String orderLabel) async {
     final device =
         widget.db.raw.select('SELECT * FROM device WHERE id = 1').first;
     final host = device['printer_host'] as String?;
@@ -186,10 +214,13 @@ class _TillScreenState extends State<TillScreen> {
         ),
     ];
     final bytes = buildReceipt(ReceiptData(
-      brandName: 'Fatima Restaurant',
-      vatNumber: '310000000000003',
+      // From the device row, not a constant: enrolment delivers the seller
+      // identity, and a hardcoded name printed another tenant's restaurant on
+      // every receipt.
+      brandName: (device['zatca_seller_name'] as String?) ?? '',
+      vatNumber: (device['zatca_vat_number'] as String?) ?? '',
       receiptNo: sale.receiptNo,
-      orderNo: _orderNo - 1,
+      orderNo: orderLabel == '—' ? null : orderLabel,
       dateTime: DateTime.now(),
       lines: lines,
       netTotal: sale.netTotal,
@@ -232,7 +263,7 @@ class _TillScreenState extends State<TillScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(
-              child: Text('ORDER $_orderNo',
+              child: Text('ORDER $_orderLabel',
                   style: Theme.of(context)
                       .textTheme
                       .titleMedium

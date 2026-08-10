@@ -201,18 +201,29 @@ class SyncApi {
     _decode(r);
   }
 
-  /// Allocate the next customer-facing order number (online path; the hub
-  /// allocates offline).
-  Future<int> nextOrderNumber({required DateTime businessDate}) async {
+  /// Reserve a contiguous run of customer-facing order numbers.
+  ///
+  /// The device owns `first .. first + count - 1` and hands them out locally,
+  /// which is what keeps order numbers working with no network while two
+  /// tills at one counter never share one. See `order_numbers.dart`.
+  Future<({int first, int count})> reserveOrderNumbers({
+    required DateTime businessDate,
+    int count = 1,
+  }) async {
     final r = await _client.post(
       _u('/orders/next'),
       headers: _headers(),
       body: jsonEncode({
-        'business_date':
-            businessDate.toIso8601String().substring(0, 10),
+        'business_date': businessDate.toIso8601String().substring(0, 10),
+        'count': count,
       }),
     );
-    return _decode(r)['order_no'] as int;
+    final body = _decode(r);
+    return (
+      first: body['order_no'] as int,
+      // Older backends answered one number at a time and sent no count.
+      count: (body['count'] as int?) ?? 1,
+    );
   }
 
   void close() => _client.close();

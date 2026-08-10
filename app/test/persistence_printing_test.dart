@@ -168,7 +168,7 @@ void main() {
           brandName: 'Fatima Restaurant',
           vatNumber: '310000000000003',
           receiptNo: 'T01-000042',
-          orderNo: 17,
+          orderNo: '17',
           dateTime: DateTime(2026, 8, 4, 20, 15),
           lines: const [
             ReceiptLine(qty: 2, name: 'HUMMOS', amount: 1600),

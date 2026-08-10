@@ -197,6 +197,98 @@ async def test_concurrent_allocations_never_collide(client, seeded):
     assert sorted(numbers) == list(range(1, 9))
 
 
+# --------------------------------------------------------------------------
+# Block reservation
+#
+# Devices reserve a run and hand out from it locally, which is what lets a
+# till keep calling out order numbers with no network. The property that
+# matters is that two tills can never be holding the same number.
+
+
+async def test_a_block_reserves_a_contiguous_run(client, seeded):
+    day = dt.date(2026, 8, 20)
+    r = await client.post("/v1/orders/next",
+                          json={"business_date": day.isoformat(), "count": 50},
+                          headers=auth(seeded))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["order_no"] == 1
+    assert body["count"] == 50
+
+    # The next caller starts after the whole reserved run, not after one.
+    nxt = await client.post("/v1/orders/next",
+                            json={"business_date": day.isoformat()},
+                            headers=auth(seeded))
+    assert nxt.json()["order_no"] == 51
+
+
+async def test_blocks_handed_to_two_tills_never_overlap(client, seeded):
+    day = dt.date(2026, 8, 21)
+
+    async def reserve(count):
+        r = await client.post(
+            "/v1/orders/next",
+            json={"business_date": day.isoformat(), "count": count},
+            headers=auth(seeded),
+        )
+        body = r.json()
+        return set(range(body["order_no"], body["order_no"] + body["count"]))
+
+    runs = await asyncio.gather(*[reserve(20) for _ in range(6)])
+
+    combined = set().union(*runs)
+    assert len(combined) == 120, "two tills were handed the same number"
+    # And the runs tile the range with no gaps, so numbers stay short.
+    assert combined == set(range(1, 121))
+
+
+async def test_omitting_count_still_reserves_one(client, seeded):
+    """The device sends a count; anything else on the network must not
+    accidentally reserve a block."""
+    day = dt.date(2026, 8, 22)
+    r = await client.post("/v1/orders/next",
+                          json={"business_date": day.isoformat()},
+                          headers=auth(seeded))
+    assert r.json() == {"business_date": day.isoformat(), "order_no": 1,
+                        "count": 1}
+
+
+async def test_an_absurd_block_is_refused(client, seeded):
+    """Unbounded reservations would let one till burn a day of numbers, and
+    the numbers have to stay short enough to shout across a kitchen."""
+    day = dt.date(2026, 8, 23)
+    r = await client.post(
+        "/v1/orders/next",
+        json={"business_date": day.isoformat(), "count": 10_000},
+        headers=auth(seeded),
+    )
+    assert r.status_code == 422
+
+
+async def test_a_zero_block_is_refused(client, seeded):
+    day = dt.date(2026, 8, 24)
+    r = await client.post(
+        "/v1/orders/next",
+        json={"business_date": day.isoformat(), "count": 0},
+        headers=auth(seeded),
+    )
+    assert r.status_code == 422
+
+
+async def test_blocks_are_scoped_to_the_branch(client, seeded):
+    """Two branches of one company both start at 1 - the number is called
+    across one kitchen, not the whole chain."""
+    day = dt.date(2026, 8, 25)
+    a = (await client.post("/v1/orders/next",
+                           json={"business_date": day.isoformat(), "count": 10},
+                           headers=auth(seeded, "a"))).json()
+    b = (await client.post("/v1/orders/next",
+                           json={"business_date": day.isoformat(), "count": 10},
+                           headers=auth(seeded, "b"))).json()
+    assert a["order_no"] == 1
+    assert b["order_no"] == 1
+
+
 async def test_order_numbers_are_tenant_scoped(client, seeded):
     day = dt.date(2026, 8, 13)
     a = (await client.post("/v1/orders/next",

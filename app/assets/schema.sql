@@ -170,9 +170,17 @@ CREATE TABLE sales_type (
 
 -- Customer-facing order numbers, reset daily so they stay short enough to call
 -- across a kitchen. PixelPoint recorded none at all in 31,000 drive-thru orders.
+--
+-- A device does NOT count these on its own: two tills at one counter would call
+-- out the same number to different customers. It asks the backend for a
+-- contiguous BLOCK and hands out from that, so the allocation is atomic per
+-- branch and per day while the numbers themselves stay usable with no network.
+-- `next_number` is the next to hand out; `block_end` is the last one this
+-- device owns (inclusive). next_number > block_end means the block is spent.
 CREATE TABLE order_counter (
     business_date  TEXT PRIMARY KEY,
-    next_number    INTEGER NOT NULL DEFAULT 1
+    next_number    INTEGER NOT NULL DEFAULT 1,
+    block_end      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE employee (

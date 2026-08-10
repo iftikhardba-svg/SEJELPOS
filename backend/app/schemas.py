@@ -479,11 +479,18 @@ class EnrolmentRedeemOut(BaseModel):
 
 class OrderNumberIn(BaseModel):
     business_date: dt.date
+    # Devices reserve a block rather than one number at a time, so they can
+    # keep calling out numbers with no network. Capped because an unbounded
+    # request would let one till burn a day's worth of numbers in one call.
+    count: int = Field(default=1, ge=1, le=500)
 
 
 class OrderNumberOut(BaseModel):
     business_date: dt.date
+    # First number of the reserved run. The caller owns
+    # order_no .. order_no + count - 1 inclusive.
     order_no: int
+    count: int = 1
 
 
 # --------------------------------------------------------------------------
