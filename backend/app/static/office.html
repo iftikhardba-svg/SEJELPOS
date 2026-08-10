@@ -908,8 +908,11 @@ async function openProduct(id) {
 
 let selectedScreenId = null;
 let heldButtonId = null;   // picked up, waiting for a destination cell
+let menuLevel = 'pages';   // 'menus' = the grid a till lands on; 'pages' = one page
+let selectedMenuId = null;
 
 async function renderMenu() {
+  if (menuLevel === 'menus') return renderMenuGrid();
   loading('menu');
   try {
     const screens = await api('/menu-screens');
@@ -930,9 +933,29 @@ async function renderMenu() {
   } catch (ex) { failed('menu', ex); }
 }
 
+/// Two levels, one tab. A menu is the grid of page tiles a till lands on; a
+/// page is the grid of product buttons inside it. Switching between them is
+/// the same move a cashier makes, so it is one control rather than two tabs.
+function levelSwitch() {
+  const bar = el('div', { className: 'toolbar' });
+  for (const [value, label] of [['menus', 'Menus'], ['pages', 'Order pages']]) {
+    const b = el('button', {
+      className: 'btn small ' + (menuLevel === value ? '' : 'ghost'),
+      textContent: label,
+    });
+    b.addEventListener('click', () => {
+      menuLevel = value;
+      heldButtonId = null;
+      renderMenu();
+    });
+    bar.append(b);
+  }
+  return bar;
+}
+
 function pageList(screens) {
   const panel = el('section', { className: 'panel' },
-    [el('h2', { textContent: 'Order pages' })]);
+    [el('h2', { textContent: 'Order pages' }), levelSwitch()]);
 
   const bar = el('div', { className: 'toolbar' });
   const add = el('button', { className: 'btn small', textContent: 'New page' });
@@ -1116,6 +1139,155 @@ async function onCell(screen, button, x, y) {
       body: JSON.stringify({ prodnum, pos_x: x, pos_y: y }) });
     renderMenu();
   } catch (ex) { toast(ex.message); }
+}
+
+// ---- the menus level: the grid of page tiles a till lands on ------------
+
+async function renderMenuGrid() {
+  loading('menu');
+  try {
+    const menus = await api('/menus');
+    const wrap = el('div', { className: 'master' });
+
+    const list = el('section', { className: 'panel' },
+      [el('h2', { textContent: 'Menus' }), levelSwitch()]);
+    const rows = el('div', { className: 'list' });
+    for (const m of menus) {
+      const row = el('button', {
+        className: 'listrow' + (m.id === selectedMenuId ? ' on' : ''),
+      });
+      row.append(
+        el('div', { className: 'listmain' }, [
+          el('span', { textContent: m.name }),
+          m.is_active ? el('span')
+            : el('span', { className: 'pill bad', textContent: 'inactive' }),
+        ]),
+        el('div', { className: 'listsub' }, [
+          el('span', { className: 'muted', textContent: '#' + m.menu_no }),
+          el('span', { className: 'muted',
+            textContent: m.page_count + ' pages' }),
+        ]),
+      );
+      row.addEventListener('click', () => {
+        selectedMenuId = m.id; renderMenu();
+      });
+      rows.append(row);
+    }
+    list.append(rows);
+    wrap.append(list, el('div', { id: 'menuCanvas' }));
+    into('menu', wrap);
+
+    const chosen = menus.find(m => m.id === selectedMenuId) || menus[0];
+    if (chosen) { selectedMenuId = chosen.id; await openMenu(chosen); }
+  } catch (ex) { failed('menu', ex); }
+}
+
+async function openMenu(menu) {
+  const host = $('#menuCanvas');
+  host.replaceChildren(el('p', { className: 'note', textContent: 'Loading…' }));
+
+  let pages, screens;
+  try {
+    [pages, screens] = await Promise.all([
+      api(`/menus/${menu.id}/pages`),
+      api('/menu-screens'),
+    ]);
+  } catch (ex) {
+    return host.replaceChildren(el('p', { className: 'err', textContent: ex.message }));
+  }
+
+  const across = Math.min(20, Math.max(menu.used_across + 1, 4));
+  const down = Math.min(20, Math.max(menu.used_down + 1, 3));
+  const byCell = new Map();
+  for (const p of pages) byCell.set(`${p.pos_x},${p.pos_y}`, p);
+
+  const panel = el('section', { className: 'panel' },
+    [el('h2', { textContent: `${menu.name}  ·  menu ${menu.menu_no}` })]);
+
+  const grid = el('div', { className: 'menugrid' });
+  grid.style.gridTemplateColumns = `repeat(${across}, minmax(110px, 1fr))`;
+
+  for (let y = 1; y <= down; y++) {
+    for (let x = 1; x <= across; x++) {
+      const p = byCell.get(`${x},${y}`);
+      const cell = el('button', {
+        className: 'cell' + (p ? ' filled' : ''),
+        title: p ? `${p.name} · page ${p.screen_no}` : `Empty  (${x}, ${y})`,
+      });
+      if (p) {
+        cell.style.background = p.back_color || '';
+        cell.style.color = p.fore_color || '';
+        cell.append(
+          el('span', { className: 'celltext', textContent: p.name }),
+          el('span', { className: 'cellprice',
+            textContent: p.button_count + ' buttons' }),
+        );
+      }
+      cell.addEventListener('click', () => onMenuCell(menu, p, x, y, screens));
+      grid.append(cell);
+    }
+  }
+  panel.append(el('div', { className: 'scroll' }, grid));
+  panel.append(el('p', { className: 'note', textContent:
+    'This is the grid a till opens on. Click a tile to open that page’s '
+    + 'buttons, or an empty cell to put a page here. Colours come from the '
+    + 'page itself.' }));
+
+  host.replaceChildren(panel);
+}
+
+async function onMenuCell(menu, page, x, y, screens) {
+  if (page) {
+    // Drill into the page's own button grid — the move a cashier makes.
+    const screen = screens.find(s => s.menu_id === page.screen_no);
+    if (screen) {
+      selectedScreenId = screen.id;
+      menuLevel = 'pages';
+      return renderMenu();
+    }
+    return toast('That page no longer exists');
+  }
+
+  const screenNo = await pickPage(screens, menu);
+  if (!screenNo) return;
+  try {
+    await api(`/menus/${menu.id}/pages`, { method: 'POST',
+      body: JSON.stringify({ screen_no: screenNo, pos_x: x, pos_y: y }) });
+    renderMenu();
+  } catch (ex) { toast(ex.message); }
+}
+
+function pickPage(screens, menu) {
+  return new Promise(resolve => {
+    const back = el('div', { className: 'modal-back' });
+    const box = el('div', { className: 'modal' });
+    const list = el('div', { className: 'list', style: 'max-height:50vh' });
+    const close = v => { back.remove(); resolve(v); };
+
+    for (const s of screens) {
+      const row = el('button', { className: 'listrow' });
+      row.append(
+        el('div', { className: 'listmain' },
+          [el('span', { textContent: s.name })]),
+        el('div', { className: 'listsub' }, [
+          el('span', { className: 'muted', textContent: '#' + s.menu_id }),
+          el('span', { className: 'muted',
+            textContent: s.button_count + ' buttons' }),
+        ]),
+      );
+      row.addEventListener('click', () => close(s.menu_id));
+      list.append(row);
+    }
+
+    const cancel = el('button', { className: 'btn ghost', textContent: 'Cancel' });
+    cancel.addEventListener('click', () => close(null));
+    back.addEventListener('click', e => { if (e.target === back) close(null); });
+
+    box.append(el('h2', { textContent: `Put a page on ${menu.name}` }), list,
+      el('div', { style: 'margin-top:12px' }, cancel));
+    back.append(box);
+    document.body.append(back);
+  });
 }
 
 /// A search-as-you-type product chooser. 560 products is far too many for a

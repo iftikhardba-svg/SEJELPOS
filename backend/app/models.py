@@ -311,6 +311,71 @@ class ReportCategory(Base):
     server_version: Mapped[int] = mapped_column(BigInteger, index=True)
 
 
+class Menu(Base):
+    """A whole menu — the level above order pages.
+
+    "Default Menu" is the grid of coloured page tiles a cashier lands on:
+    Shawarma, Grill, Appetizer, Beverage and the rest. It is how they get
+    anywhere, and it is what makes a migrated till feel like the one they
+    already knew.
+
+    Missed on the first migration pass, which imported the 64 order pages but
+    not the menus that arrange them — so the till could only show a flat strip
+    of every page, which is not a menu anyone learned.
+    """
+
+    __tablename__ = "menu"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "branch_id", "menu_no"),
+        Index("ix_menu_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("branch.id"), nullable=True
+    )
+    menu_no: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(Text)
+    name_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # PixelPoint's revenue centre. Carried for reference; nothing reads it yet.
+    revenue_centre: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
+class MenuPage(Base):
+    """Where an order page sits on a menu's grid.
+
+    Deliberately a join rather than a column on MenuScreen: one page appears
+    on more than one menu, at a different spot on each. 'Shawarma' is tile
+    (1,1) of the Default Menu and may be somewhere else entirely on Kantaka.
+    """
+
+    __tablename__ = "menu_page"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "menu_no", "screen_no"),
+        Index("ix_menu_page_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    branch_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("branch.id"), nullable=True
+    )
+    # -> Menu.menu_no and MenuScreen.menu_id. Business keys rather than row
+    # ids, because that is what the device catalog and the imports speak.
+    menu_no: Mapped[int] = mapped_column(Integer)
+    screen_no: Mapped[int] = mapped_column(Integer)
+    pos_x: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pos_y: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
 class MenuScreen(Base):
     __tablename__ = "menu_screen"
     __table_args__ = (UniqueConstraint("tenant_id", "branch_id", "menu_id"),)
@@ -326,6 +391,10 @@ class MenuScreen(Base):
     sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
     buttons_across: Mapped[int | None] = mapped_column(Integer, nullable=True)
     buttons_down: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The page tile's colours on the menu grid, '#RRGGBB' or NULL for the
+    # theme. Same reason as the product buttons: staff reach for a colour.
+    fore_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    back_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     is_modifier_screen: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)

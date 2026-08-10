@@ -139,12 +139,98 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "sort_order": c.get("ORDERPOSITION") or 0,
             "buttons_across": c.get("ButtonAcross"),
             "buttons_down": c.get("ButtonDown"),
+            # The page tile's own colours, used on the menu grid a cashier
+            # lands on. Same Delphi TColor encoding as the product buttons.
+            "fore_color": tcolor_to_hex(c.get("TOPCOLOUR")),
+            "back_color": tcolor_to_hex(c.get("BACKCOLOUR")),
             "is_modifier_screen": is_modifier,
             "is_active": truthy(c["ISACTIVE"]),
             "is_deleted": False,
         }
         cat_by_id[cat_id] = rec
         menu_screens.append(rec)
+
+    # ---- menus, and which pages sit where on them -------------------------
+    # The level above order pages. "Default Menu" is the grid of coloured page
+    # tiles a cashier lands on — Shawarma, Grill, Appetizer and the rest — and
+    # it is how they get anywhere. Without it a till can only offer a flat
+    # list of all 57 pages, which is not the menu anyone learned.
+    menus = []
+    known_menu_nos = set()
+    for m in src.get("menus", []):
+        menu_no = m["MENUINDEX"]
+        known_menu_nos.add(menu_no)
+        menus.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "branch_id": branch_id,
+            "menu_no": menu_no,
+            "name": (m["DESCRIPT"] or "").strip() or f"Menu {menu_no}",
+            "name_ar": None,
+            "revenue_centre": m.get("RevCenter"),
+            "is_active": truthy(m["ISACTIVE"]),
+            "is_deleted": False,
+        })
+
+    # A page can have SEVERAL rows on one menu: PixelPoint leaves the old
+    # placement behind with ISACTIVE = 0 when a tile is moved. Shawarma has
+    # one at (1,1) live and one at (1,8) dead. Carrying both and letting the
+    # last win rebuilt the menu from its own history — the grid came out as
+    # the layout nobody uses. Only the live placement is the tile.
+    menu_pages = []
+    seen: dict[tuple[int, int], dict] = {}
+    superseded = 0
+    for p in src.get("category_positions", []):
+        menu_no = p.get("MENUINDEX")
+        screen_no = p.get("ORDERCAT")
+        if menu_no not in known_menu_nos or screen_no not in cat_by_id:
+            # A placement pointing at a menu or page that no longer exists is
+            # dead configuration, not data.
+            continue
+        if not truthy(p["ISACTIVE"]):
+            superseded += 1
+            continue
+
+        key = (menu_no, screen_no)
+        rec = {
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "branch_id": branch_id,
+            "menu_no": menu_no,
+            "screen_no": screen_no,
+            "pos_x": p.get("PosX"),
+            "pos_y": p.get("PosY"),
+            "sort_order": p.get("ORDERPOS") or 0,
+            "is_active": True,
+            "is_deleted": False,
+        }
+        if key in seen:
+            # Two live placements of one page on one menu. Nothing can decide
+            # which tile is real, so keep the first and say so rather than
+            # picking silently.
+            warnings.append(
+                f"Page {screen_no} is placed twice on menu {menu_no} "
+                f"({seen[key]['pos_x']},{seen[key]['pos_y']}) and "
+                f"({rec['pos_x']},{rec['pos_y']}). Kept the first; check the "
+                "menu layout."
+            )
+            continue
+        seen[key] = rec
+        menu_pages.append(rec)
+
+    if superseded:
+        warnings.append(
+            f"{superseded} menu placements were superseded in the source "
+            "(the old tile left behind when one was moved) and were not "
+            "imported."
+        )
+
+    placed = sum(1 for p in menu_pages if p["is_active"] and p["pos_x"])
+    if menus and not placed:
+        warnings.append(
+            "No menu has any page placed on its grid, so a till has no menu "
+            "to land on. Lay one out in the back office before go-live."
+        )
 
     # Which products live on a modifier screen? Used to classify them below.
     modifier_cats = {cid for cid, r in cat_by_id.items() if r["is_modifier_screen"]}
@@ -529,6 +615,8 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
         "company_id": company_id,
         "branch_id": branch_id,
         "vat_percent": str(vat),
+        "menus": menus,
+        "menu_pages": menu_pages,
         "menu_screens": menu_screens,
         "report_categories": report_categories,
         "products": products,

@@ -33,7 +33,9 @@ from ..models import (
     Device,
     EnrolmentCode,
     KitchenStation,
+    Menu,
     MenuButton,
+    MenuPage,
     MenuScreen,
     Product,
     ReportCategory,
@@ -56,6 +58,9 @@ from ..schemas import (
     OfficeMenuButtonMove,
     OfficeMenuButtonOut,
     OfficeMenuButtonPlace,
+    OfficeMenuOut,
+    OfficeMenuPageOut,
+    OfficeMenuPagePlace,
     OfficeMenuScreenCreate,
     OfficeMenuScreenOut,
     OfficeMenuScreenUpdate,
@@ -87,7 +92,8 @@ async def _next_catalog_version(session, tenant_id: uuid.UUID) -> int:
     a product edit hide behind a higher menu version.
     """
     highest = 0
-    for model in (Product, MenuScreen, SalesType, ReportCategory):
+    for model in (Product, MenuScreen, SalesType, ReportCategory, Menu,
+                  MenuPage, MenuButton):
         value = (
             await session.execute(
                 select(func.max(model.server_version)).where(
@@ -578,6 +584,236 @@ async def _bump_menu(session, tenant_id: uuid.UUID, *rows) -> int:
     for row in rows:
         row.server_version = version
     return version
+
+
+@router.get("/menus", response_model=list[OfficeMenuOut])
+async def list_menus(ctx: OfficeContext = OfficeDep) -> list[OfficeMenuOut]:
+    """The menus a till can land on. Most sites have one; this customer has
+    three, and only one of them is laid out."""
+    async with tenant_session(ctx.tenant_id) as session:
+        menus = list(
+            (await session.execute(
+                select(Menu)
+                .where(Menu.tenant_id == ctx.tenant_id,
+                       Menu.is_deleted.is_(False))
+                .order_by(Menu.name)
+            )).scalars().all()
+        )
+        usage = {
+            menu_no: (count, x or 0, y or 0)
+            for menu_no, count, x, y in (
+                await session.execute(
+                    select(
+                        MenuPage.menu_no,
+                        func.count(MenuPage.id),
+                        func.max(MenuPage.pos_x),
+                        func.max(MenuPage.pos_y),
+                    )
+                    .where(MenuPage.tenant_id == ctx.tenant_id,
+                           MenuPage.is_deleted.is_(False))
+                    .group_by(MenuPage.menu_no)
+                )
+            ).all()
+        }
+
+    return [
+        OfficeMenuOut(
+            id=m.id, menu_no=m.menu_no, name=m.name, name_ar=m.name_ar,
+            is_active=m.is_active,
+            page_count=usage.get(m.menu_no, (0, 0, 0))[0],
+            used_across=usage.get(m.menu_no, (0, 0, 0))[1],
+            used_down=usage.get(m.menu_no, (0, 0, 0))[2],
+        )
+        for m in menus
+    ]
+
+
+@router.get("/menus/{menu_id}/pages", response_model=list[OfficeMenuPageOut])
+async def list_menu_pages(
+    menu_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> list[OfficeMenuPageOut]:
+    async with tenant_session(ctx.tenant_id) as session:
+        menu = (
+            await session.execute(
+                select(Menu).where(Menu.id == menu_id,
+                                   Menu.tenant_id == ctx.tenant_id)
+            )
+        ).scalar_one_or_none()
+        if menu is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such menu")
+
+        rows = (
+            await session.execute(
+                select(MenuPage, MenuScreen)
+                .join(
+                    MenuScreen,
+                    (MenuScreen.menu_id == MenuPage.screen_no)
+                    & (MenuScreen.tenant_id == MenuPage.tenant_id),
+                    isouter=True,
+                )
+                .where(
+                    MenuPage.tenant_id == ctx.tenant_id,
+                    MenuPage.menu_no == menu.menu_no,
+                    MenuPage.is_deleted.is_(False),
+                )
+                .order_by(MenuPage.pos_y, MenuPage.pos_x)
+            )
+        ).all()
+
+        counts = dict(
+            (
+                await session.execute(
+                    select(MenuButton.menu_id, func.count(MenuButton.id))
+                    .where(MenuButton.tenant_id == ctx.tenant_id,
+                           MenuButton.is_deleted.is_(False))
+                    .group_by(MenuButton.menu_id)
+                )
+            ).all()
+        )
+
+    return [
+        OfficeMenuPageOut(
+            id=p.id,
+            screen_no=p.screen_no,
+            name=s.name if s else f"(missing page {p.screen_no})",
+            pos_x=p.pos_x, pos_y=p.pos_y,
+            fore_color=s.fore_color if s else None,
+            back_color=s.back_color if s else None,
+            button_count=counts.get(p.screen_no, 0),
+            is_active=p.is_active and bool(s.is_active) if s else False,
+        )
+        for p, s in rows
+    ]
+
+
+@router.post(
+    "/menus/{menu_id}/pages",
+    response_model=OfficeMenuPageOut,
+    status_code=201,
+)
+async def place_menu_page(
+    menu_id: uuid.UUID,
+    body: OfficeMenuPagePlace,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeMenuPageOut:
+    """Put an order page on a menu's grid."""
+    async with tenant_session(ctx.tenant_id) as session:
+        menu = (
+            await session.execute(
+                select(Menu).where(Menu.id == menu_id,
+                                   Menu.tenant_id == ctx.tenant_id)
+            )
+        ).scalar_one_or_none()
+        if menu is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such menu")
+
+        screen = (
+            await session.execute(
+                select(MenuScreen).where(
+                    MenuScreen.tenant_id == ctx.tenant_id,
+                    MenuScreen.menu_id == body.screen_no,
+                    MenuScreen.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if screen is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"no page numbered {body.screen_no}"
+            )
+
+        existing = (
+            await session.execute(
+                select(MenuPage).where(
+                    MenuPage.tenant_id == ctx.tenant_id,
+                    MenuPage.menu_no == menu.menu_no,
+                    MenuPage.screen_no == body.screen_no,
+                )
+            )
+        ).scalar_one_or_none()
+
+        occupant = (
+            await session.execute(
+                select(MenuPage).where(
+                    MenuPage.tenant_id == ctx.tenant_id,
+                    MenuPage.menu_no == menu.menu_no,
+                    MenuPage.pos_x == body.pos_x,
+                    MenuPage.pos_y == body.pos_y,
+                    MenuPage.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if occupant is not None and (
+            existing is None or occupant.id != existing.id
+        ):
+            if existing is None:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"that tile already holds page {occupant.screen_no}",
+                )
+            # Moving an already-placed page onto another: swap, same as the
+            # button grid, for the same reason.
+            occupant.pos_x, occupant.pos_y = existing.pos_x, existing.pos_y
+            await _bump_menu(session, ctx.tenant_id, occupant)
+
+        if existing is not None:
+            existing.pos_x, existing.pos_y = body.pos_x, body.pos_y
+            existing.is_deleted = False
+            existing.is_active = True
+            page = existing
+        else:
+            page = MenuPage(
+                tenant_id=ctx.tenant_id,
+                branch_id=screen.branch_id,
+                menu_no=menu.menu_no,
+                screen_no=body.screen_no,
+                pos_x=body.pos_x,
+                pos_y=body.pos_y,
+                sort_order=(body.pos_y - 1) * 100 + body.pos_x,
+                server_version=0,
+            )
+            session.add(page)
+        await _bump_menu(session, ctx.tenant_id, page)
+        await session.flush()
+
+        buttons = (
+            await session.execute(
+                select(func.count(MenuButton.id)).where(
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.menu_id == body.screen_no,
+                    MenuButton.is_deleted.is_(False),
+                )
+            )
+        ).scalar() or 0
+
+    return OfficeMenuPageOut(
+        id=page.id, screen_no=page.screen_no, name=screen.name,
+        pos_x=page.pos_x, pos_y=page.pos_y,
+        fore_color=screen.fore_color, back_color=screen.back_color,
+        button_count=buttons, is_active=screen.is_active,
+    )
+
+
+@router.delete("/menu-pages/{page_id}", status_code=204)
+async def remove_menu_page(
+    page_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> None:
+    """Take a page off a menu. The page and its buttons survive — this only
+    removes the tile that reaches it."""
+    async with tenant_session(ctx.tenant_id) as session:
+        page = (
+            await session.execute(
+                select(MenuPage).where(
+                    MenuPage.id == page_id,
+                    MenuPage.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if page is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such tile")
+        page.is_deleted = True
+        await _bump_menu(session, ctx.tenant_id, page)
 
 
 @router.get("/menu-screens", response_model=list[OfficeMenuScreenOut])

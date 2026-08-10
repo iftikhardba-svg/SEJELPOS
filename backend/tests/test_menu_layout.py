@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid as _uuid
 
 from app.db import SessionLocal
-from app.models import MenuButton, MenuScreen, Product
+from app.models import Menu, MenuButton, MenuScreen, Product
 from sqlalchemy import select
 
 
@@ -293,6 +293,154 @@ async def test_layout_changes_bump_the_version_so_tills_see_them(
 
 # --------------------------------------------------------------------------
 # Isolation
+
+
+# --------------------------------------------------------------------------
+# The menus level — the grid of page tiles a till lands on
+
+
+async def _menu(client, seeded, key="a", menu_no=1, name="Default Menu"):
+    async with SessionLocal() as s:
+        async with s.begin():
+            s.add(Menu(
+                tenant_id=seeded[key]["tenant_id"],
+                branch_id=seeded[key]["branch_id"],
+                menu_no=menu_no, name=name, server_version=1,
+            ))
+    r = await client.get("/v1/office/menus", headers=office(seeded, key))
+    return next(m for m in r.json() if m["menu_no"] == menu_no)
+
+
+async def test_a_page_can_be_put_on_a_menu(client, seeded):
+    menu = await _menu(client, seeded, menu_no=41)
+    page = await _page(client, seeded, menu_id=41 * 10, name="Shawarma")
+
+    r = await client.post(
+        f"/v1/office/menus/{menu['id']}/pages",
+        json={"screen_no": page["menu_id"], "pos_x": 1, "pos_y": 1},
+        headers=office(seeded),
+    )
+    assert r.status_code == 201, r.text
+    assert r.json()["name"] == "Shawarma"
+
+
+async def test_two_pages_cannot_share_a_tile(client, seeded):
+    menu = await _menu(client, seeded, menu_no=42)
+    a = await _page(client, seeded, menu_id=421, name="Grill")
+    b = await _page(client, seeded, menu_id=422, name="Beverage")
+
+    await client.post(f"/v1/office/menus/{menu['id']}/pages",
+                      json={"screen_no": a["menu_id"], "pos_x": 2, "pos_y": 1},
+                      headers=office(seeded))
+    clash = await client.post(
+        f"/v1/office/menus/{menu['id']}/pages",
+        json={"screen_no": b["menu_id"], "pos_x": 2, "pos_y": 1},
+        headers=office(seeded))
+    assert clash.status_code == 409
+
+
+async def test_placing_a_page_twice_moves_it_rather_than_duplicating(
+    client, seeded
+):
+    """One page has one tile per menu. Placing it again is a move — two tiles
+    reaching the same page is a menu that lies about how big it is."""
+    menu = await _menu(client, seeded, menu_no=43)
+    page = await _page(client, seeded, menu_id=431, name="Appetizer")
+
+    await client.post(f"/v1/office/menus/{menu['id']}/pages",
+                      json={"screen_no": 431, "pos_x": 1, "pos_y": 1},
+                      headers=office(seeded))
+    await client.post(f"/v1/office/menus/{menu['id']}/pages",
+                      json={"screen_no": 431, "pos_x": 3, "pos_y": 2},
+                      headers=office(seeded))
+
+    tiles = (await client.get(f"/v1/office/menus/{menu['id']}/pages",
+                              headers=office(seeded))).json()
+    assert len(tiles) == 1
+    assert (tiles[0]["pos_x"], tiles[0]["pos_y"]) == (3, 2)
+    assert page["menu_id"] == 431
+
+
+async def test_a_tile_carries_the_pages_colour_and_button_count(client, seeded):
+    """The editor draws the menu as a till would — staff reach for a colour
+    before they read a name."""
+    menu = await _menu(client, seeded, menu_no=44)
+    page = await _page(client, seeded, menu_id=441, name="Beverage")
+
+    async with SessionLocal() as s:
+        async with s.begin():
+            screen = (await s.execute(
+                select(MenuScreen).where(
+                    MenuScreen.id == _uuid.UUID(page["id"]))
+            )).scalar_one()
+            screen.back_color = "#FF7F7F"
+
+    p = await _extra_product(seeded, 8861)
+    await client.post(f"/v1/office/menu-screens/{page['id']}/buttons",
+                      json={"prodnum": p, "pos_x": 1, "pos_y": 1},
+                      headers=office(seeded))
+    await client.post(f"/v1/office/menus/{menu['id']}/pages",
+                      json={"screen_no": 441, "pos_x": 1, "pos_y": 1},
+                      headers=office(seeded))
+
+    tiles = (await client.get(f"/v1/office/menus/{menu['id']}/pages",
+                              headers=office(seeded))).json()
+    assert tiles[0]["back_color"] == "#FF7F7F"
+    assert tiles[0]["button_count"] == 1
+
+
+async def test_removing_a_tile_keeps_the_page_and_its_buttons(client, seeded):
+    """Taking a page off a menu is not deleting the page. Everything on it
+    survives; only the way in is gone."""
+    menu = await _menu(client, seeded, menu_no=45)
+    page = await _page(client, seeded, menu_id=451, name="Extra")
+    p = await _extra_product(seeded, 8871)
+    await client.post(f"/v1/office/menu-screens/{page['id']}/buttons",
+                      json={"prodnum": p, "pos_x": 1, "pos_y": 1},
+                      headers=office(seeded))
+    tile = (await client.post(f"/v1/office/menus/{menu['id']}/pages",
+                              json={"screen_no": 451, "pos_x": 1, "pos_y": 1},
+                              headers=office(seeded))).json()
+
+    r = await client.delete(f"/v1/office/menu-pages/{tile['id']}",
+                            headers=office(seeded))
+    assert r.status_code == 204
+
+    assert (await client.get(f"/v1/office/menus/{menu['id']}/pages",
+                             headers=office(seeded))).json() == []
+    buttons = (await client.get(f"/v1/office/menu-screens/{page['id']}/buttons",
+                                headers=office(seeded))).json()
+    assert len(buttons) == 1, "the page's buttons went with the tile"
+
+
+async def test_menu_changes_reach_a_device(client, seeded):
+    menu = await _menu(client, seeded, menu_no=46)
+    page = await _page(client, seeded, menu_id=461, name="Keeta")
+
+    before = (await client.get(
+        "/v1/catalog?since=0",
+        headers={"Authorization": f"Bearer {seeded['a']['token']}"})).json()["version"]
+
+    await client.post(f"/v1/office/menus/{menu['id']}/pages",
+                      json={"screen_no": 461, "pos_x": 2, "pos_y": 2},
+                      headers=office(seeded))
+
+    after = (await client.get(
+        f"/v1/catalog?since={before}",
+        headers={"Authorization": f"Bearer {seeded['a']['token']}"})).json()
+    assert any(p["screen_no"] == 461 for p in after["menu_pages"])
+    assert page["menu_id"] == 461
+
+
+async def test_another_tenants_menu_cannot_be_laid_out(client, seeded):
+    theirs = await _menu(client, seeded, key="b", menu_no=47, name="Theirs")
+    mine = await _page(client, seeded, key="a", menu_id=471, name="Mine")
+    r = await client.post(
+        f"/v1/office/menus/{theirs['id']}/pages",
+        json={"screen_no": mine["menu_id"], "pos_x": 1, "pos_y": 1},
+        headers=office(seeded, "a"),
+    )
+    assert r.status_code == 404
 
 
 async def test_pages_are_scoped_to_the_tenant(client, seeded):

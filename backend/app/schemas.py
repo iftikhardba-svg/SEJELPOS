@@ -56,7 +56,29 @@ class MenuScreenOut(CatalogItem):
     sort_order: int
     buttons_across: int | None = None
     buttons_down: int | None = None
+    fore_color: str | None = None
+    back_color: str | None = None
     is_modifier_screen: bool
+    is_active: bool
+
+
+class MenuOut(CatalogItem):
+    """A whole menu — the grid of page tiles a till lands on."""
+
+    menu_no: int
+    name: str
+    name_ar: str | None = None
+    is_active: bool
+
+
+class MenuPageOut(CatalogItem):
+    """Where a page sits on a menu's grid."""
+
+    menu_no: int
+    screen_no: int
+    pos_x: int | None = None
+    pos_y: int | None = None
+    sort_order: int
     is_active: bool
 
 
@@ -137,6 +159,8 @@ class CatalogResponse(BaseModel):
         ),
     )
     products: list[ProductOut] = []
+    menus: list[MenuOut] = []
+    menu_pages: list[MenuPageOut] = []
     menu_screens: list[MenuScreenOut] = []
     menu_buttons: list[MenuButtonOut] = []
     pay_methods: list[PayMethodOut] = []
@@ -640,6 +664,37 @@ class OfficeProductCreate(BaseModel):
 # An order page is a grid of buttons. The imported layout puts every button at
 # a real (x, y) — staff reach for position before they read the label — so the
 # editor works in grid coordinates rather than a list order.
+
+class OfficeMenuOut(BaseModel):
+    """A whole menu: the grid of page tiles a till lands on."""
+
+    id: uuid.UUID
+    menu_no: int
+    name: str
+    name_ar: str | None = None
+    is_active: bool
+    page_count: int = 0
+    used_across: int = 0
+    used_down: int = 0
+
+
+class OfficeMenuPageOut(BaseModel):
+    id: uuid.UUID
+    screen_no: int
+    name: str
+    pos_x: int | None = None
+    pos_y: int | None = None
+    fore_color: str | None = None
+    back_color: str | None = None
+    button_count: int = 0
+    is_active: bool
+
+
+class OfficeMenuPagePlace(BaseModel):
+    screen_no: int = Field(ge=1)
+    pos_x: int = Field(ge=1, le=20)
+    pos_y: int = Field(ge=1, le=20)
+
 
 class OfficeMenuScreenOut(BaseModel):
     id: uuid.UUID

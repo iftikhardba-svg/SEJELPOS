@@ -136,6 +136,15 @@ SELECT ORDERCAT, DESCRIPT, ORDERPOSITION, TOPCOLOUR, BACKCOLOUR,
 FROM DBA.OrderCat
 """
 
+# The level above order pages: a whole menu. This customer has three —
+# Default Menu, Kantaka Menu, Give Me Five — and the first is the coloured
+# grid of pages a cashier lands on. Missed on the first pass, so the till had
+# a flat strip of 57 page chips instead of the 7-tile grid staff know.
+Q_MENUS = """
+SELECT MENUINDEX, DESCRIPT, ISACTIVE, RevCenter
+FROM DBA.MultiMenuNames
+"""
+
 Q_MENU_BUTTONS = """
 SELECT UniqueID, ORDERCAT, PRODNUM, PRODPOS, PosX, PosY, ISACTIVE
 FROM DBA.MenuProdPos
@@ -204,6 +213,7 @@ def extract(con) -> dict:
         "counts": counts,
         "products": rows(con, Q_PRODUCTS),
         "report_categories": rows(con, Q_REPORT_CATEGORIES),
+        "menus": rows(con, Q_MENUS),
         "categories": rows(con, Q_CATEGORIES),
         "menu_buttons": rows(con, Q_MENU_BUTTONS),
         "category_positions": rows(con, Q_CATEGORY_POSITIONS),

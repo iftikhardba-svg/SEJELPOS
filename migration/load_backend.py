@@ -160,6 +160,32 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
                 await s.flush()
                 return made
 
+            counts["menus"] = await upsert(
+                m.Menu, data.get("menus", []), ["menu_no"], {
+                    "branch_id": lambda r: bid,
+                    "menu_no": lambda r: _int(r["menu_no"]),
+                    "name": lambda r: r["name"],
+                    "name_ar": lambda r: r.get("name_ar"),
+                    "revenue_centre": lambda r: r.get("revenue_centre"),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
+            counts["menu_pages"] = await upsert(
+                m.MenuPage, data.get("menu_pages", []),
+                ["menu_no", "screen_no"], {
+                    "branch_id": lambda r: bid,
+                    "menu_no": lambda r: _int(r["menu_no"]),
+                    "screen_no": lambda r: _int(r["screen_no"]),
+                    "pos_x": lambda r: r.get("pos_x"),
+                    "pos_y": lambda r: r.get("pos_y"),
+                    "sort_order": lambda r: _int(r.get("sort_order")),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
             counts["menu_screens"] = await upsert(
                 m.MenuScreen, data["menu_screens"], ["menu_id"], {
                     "branch_id": lambda r: bid,
@@ -168,6 +194,8 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
                     "sort_order": lambda r: _int(r.get("sort_order")),
                     "buttons_across": lambda r: r.get("buttons_across"),
                     "buttons_down": lambda r: r.get("buttons_down"),
+                    "fore_color": lambda r: r.get("fore_color"),
+                    "back_color": lambda r: r.get("back_color"),
                     "is_modifier_screen": lambda r: _bool(
                         r.get("is_modifier_screen")),
                     "is_active": lambda r: _bool(r.get("is_active"), True),

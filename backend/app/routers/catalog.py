@@ -30,7 +30,9 @@ from ..config import settings
 from ..db import tenant_session
 from ..models import (
     KitchenStation,
+    Menu,
     MenuButton,
+    MenuPage,
     MenuScreen,
     PayMethod,
     Product,
@@ -42,6 +44,8 @@ from ..schemas import (
     CatalogResponse,
     KitchenStationOut,
     MenuButtonOut,
+    MenuOut,
+    MenuPageOut,
     MenuScreenOut,
     PayMethodOut,
     ProductOut,
@@ -59,8 +63,10 @@ router = APIRouter(tags=["catalog"])
 # Screens and products come before buttons so a device that stops mid-pull
 # holds referents before referrers.
 TABLES = [
+    ("menus", Menu, MenuOut, True),
     ("menu_screens", MenuScreen, MenuScreenOut, True),
     ("products", Product, ProductOut, True),
+    ("menu_pages", MenuPage, MenuPageOut, True),
     ("menu_buttons", MenuButton, MenuButtonOut, False),
     ("pay_methods", PayMethod, PayMethodOut, False),
     ("staff", Staff, StaffOut, True),
