@@ -634,6 +634,77 @@ class OfficeProductCreate(BaseModel):
     unit_des: str | None = None
 
 
+# --------------------------------------------------------------------------
+# Menu layout
+#
+# An order page is a grid of buttons. The imported layout puts every button at
+# a real (x, y) — staff reach for position before they read the label — so the
+# editor works in grid coordinates rather than a list order.
+
+class OfficeMenuScreenOut(BaseModel):
+    id: uuid.UUID
+    menu_id: int
+    name: str
+    name_ar: str | None = None
+    sort_order: int
+    # The grid the page is drawn on. NULL in every imported row, because
+    # PixelPoint stored 0 for all of them, so the effective size is derived
+    # from where the buttons actually sit until someone sets one.
+    buttons_across: int | None = None
+    buttons_down: int | None = None
+    is_modifier_screen: bool
+    is_active: bool
+    button_count: int = 0
+    # What the grid must be at least, to show every button already placed.
+    used_across: int = 0
+    used_down: int = 0
+
+
+class OfficeMenuScreenCreate(BaseModel):
+    menu_id: int = Field(ge=1)
+    name: str = Field(min_length=1)
+    name_ar: str | None = None
+    sort_order: int = 0
+    buttons_across: int | None = Field(default=None, ge=1, le=20)
+    buttons_down: int | None = Field(default=None, ge=1, le=20)
+    is_modifier_screen: bool = False
+
+
+class OfficeMenuScreenUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    name_ar: str | None = None
+    sort_order: int | None = None
+    buttons_across: int | None = Field(default=None, ge=1, le=20)
+    buttons_down: int | None = Field(default=None, ge=1, le=20)
+    is_active: bool | None = None
+
+
+class OfficeMenuButtonOut(BaseModel):
+    id: uuid.UUID
+    prodnum: int
+    pos_x: int
+    pos_y: int
+    # Denormalised from the product so the editor can draw the button exactly
+    # as a till would, without a request per cell.
+    descript: str
+    button_text: str | None = None
+    fore_color: str | None = None
+    back_color: str | None = None
+    price_a: int
+    is_active: bool
+
+
+class OfficeMenuButtonPlace(BaseModel):
+    prodnum: int = Field(ge=1)
+    pos_x: int = Field(ge=1, le=20)
+    pos_y: int = Field(ge=1, le=20)
+
+
+class OfficeMenuButtonMove(BaseModel):
+    pos_x: int = Field(ge=1, le=20)
+    pos_y: int = Field(ge=1, le=20)
+
+
 class OfficeDeviceOut(BaseModel):
     id: uuid.UUID
     label: str

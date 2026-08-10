@@ -216,6 +216,30 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
   font-size: 13px; font-weight: 600; white-space: pre-line; line-height: 1.3;
 }
 
+/* ---- menu grid ---- */
+.menugrid { display: grid; gap: 6px; padding: 16px; min-width: max-content; }
+.cell {
+  min-height: 74px; border: 1px dashed var(--border); border-radius: 8px;
+  background: transparent; color: var(--muted); font: inherit; padding: 6px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  align-items: flex-start; text-align: left; gap: 4px;
+}
+.cell:hover { border-style: solid; border-color: var(--accent); }
+.cell.filled { border: 1px solid var(--border); color: var(--text); font-weight: 600; }
+.cell.held { outline: 3px solid var(--accent); outline-offset: 2px; }
+.celltext { font-size: 12px; line-height: 1.25; white-space: pre-line; }
+.cellprice { font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
+
+.modal-back {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: grid; place-items: center; padding: 24px; z-index: 20;
+}
+.modal {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; width: min(520px, 100%);
+}
+.modal h2 { margin: 0 0 12px; font-size: 16px; }
+
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   background: var(--text); color: var(--bg);
@@ -262,12 +286,14 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
   <nav>
     <button data-tab="dashboard" class="on">Dashboard</button>
     <button data-tab="products">Products &amp; prices</button>
+    <button data-tab="menu">Menu layout</button>
     <button data-tab="devices">Devices</button>
     <button data-tab="sales">Sales</button>
   </nav>
   <main>
     <section id="tab-dashboard"></section>
     <section id="tab-products" class="hidden"></section>
+    <section id="tab-menu" class="hidden"></section>
     <section id="tab-devices" class="hidden"></section>
     <section id="tab-sales" class="hidden"></section>
   </main>
@@ -389,9 +415,10 @@ document.querySelectorAll('nav button').forEach(b =>
 
 function show(tab) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  ['dashboard', 'products', 'devices', 'sales'].forEach(t =>
+  ['dashboard', 'products', 'menu', 'devices', 'sales'].forEach(t =>
     $('#tab-' + t).classList.toggle('hidden', t !== tab));
-  ({ dashboard: renderDashboard, products: renderProducts, devices: renderDevices, sales: renderSales })[tab]();
+  ({ dashboard: renderDashboard, products: renderProducts, menu: renderMenu,
+     devices: renderDevices, sales: renderSales })[tab]();
 }
 
 function into(id, node) {
@@ -871,6 +898,280 @@ async function openProduct(id) {
       : `${p.descript}  ·  #${p.prodnum}` }),
     form,
   ]));
+}
+
+// ------------------------------------------------------------ menu layout
+//
+// A page is a grid, and where a button sits is what staff navigate by — they
+// reach for a position before they read a label. So this draws the real grid
+// with the real colours, rather than listing buttons in some order.
+
+let selectedScreenId = null;
+let heldButtonId = null;   // picked up, waiting for a destination cell
+
+async function renderMenu() {
+  loading('menu');
+  try {
+    const screens = await api('/menu-screens');
+    const wrap = el('div', { className: 'master' });
+    wrap.append(pageList(screens), el('div', { id: 'menuCanvas' }));
+    into('menu', wrap);
+
+    const chosen = screens.find(s => s.id === selectedScreenId) || screens[0];
+    if (chosen) {
+      selectedScreenId = chosen.id;
+      await openPage(chosen);
+    } else {
+      $('#menuCanvas').replaceChildren(el('section', { className: 'panel' }, [
+        el('h2', { textContent: 'Order page' }),
+        el('p', { className: 'note', textContent: 'No pages yet.' }),
+      ]));
+    }
+  } catch (ex) { failed('menu', ex); }
+}
+
+function pageList(screens) {
+  const panel = el('section', { className: 'panel' },
+    [el('h2', { textContent: 'Order pages' })]);
+
+  const bar = el('div', { className: 'toolbar' });
+  const add = el('button', { className: 'btn small', textContent: 'New page' });
+  add.addEventListener('click', newPage);
+  bar.append(add, el('span', { className: 'muted',
+    textContent: screens.length + ' pages' }));
+  panel.append(bar);
+
+  const list = el('div', { className: 'list' });
+  for (const s of screens) {
+    const row = el('button', {
+      className: 'listrow' + (s.id === selectedScreenId ? ' on' : ''),
+    });
+    row.append(
+      el('div', { className: 'listmain' }, [
+        el('span', { textContent: s.name }),
+        s.is_active ? el('span')
+          : el('span', { className: 'pill bad', textContent: 'inactive' }),
+      ]),
+      el('div', { className: 'listsub' }, [
+        el('span', { className: 'muted', textContent: '#' + s.menu_id }),
+        el('span', { className: 'muted',
+          textContent: s.button_count + ' buttons' }),
+      ]),
+    );
+    row.addEventListener('click', () => {
+      selectedScreenId = s.id;
+      heldButtonId = null;
+      renderMenu();
+    });
+    list.append(row);
+  }
+  panel.append(list);
+  return panel;
+}
+
+async function newPage() {
+  const name = prompt('Name for the new page');
+  if (!name || !name.trim()) return;
+  const menuId = Number(prompt('Page number (used by tills and imports)'));
+  if (!Number.isInteger(menuId) || menuId < 1) return toast('Page number must be a whole number');
+  try {
+    const made = await api('/menu-screens', { method: 'POST',
+      body: JSON.stringify({ menu_id: menuId, name: name.trim(),
+                             buttons_across: 6, buttons_down: 5 }) });
+    selectedScreenId = made.id;
+    toast('Page created');
+    renderMenu();
+  } catch (ex) { toast(ex.message); }
+}
+
+async function openPage(screen) {
+  const host = $('#menuCanvas');
+  host.replaceChildren(el('p', { className: 'note', textContent: 'Loading…' }));
+
+  let buttons;
+  try { buttons = await api(`/menu-screens/${screen.id}/buttons`); }
+  catch (ex) { return host.replaceChildren(
+    el('p', { className: 'err', textContent: ex.message })); }
+
+  // The imported pages have no grid size — PixelPoint stored 0 for every one
+  // — so the page is drawn just big enough for what is on it, plus a row and
+  // column of room to place into.
+  const across = screen.buttons_across
+    || Math.min(20, Math.max(screen.used_across + 1, 4));
+  const down = screen.buttons_down
+    || Math.min(20, Math.max(screen.used_down + 1, 3));
+
+  const byCell = new Map();
+  for (const b of buttons) byCell.set(`${b.pos_x},${b.pos_y}`, b);
+
+  const panel = el('section', { className: 'panel' }, [
+    el('h2', { textContent: `${screen.name}  ·  page ${screen.menu_id}` }),
+  ]);
+
+  // ---- page settings ----
+  const bar = el('div', { className: 'toolbar' });
+  const nameInput = el('input', { type: 'text', value: screen.name,
+    ariaLabel: 'Page name', style: 'max-width:200px' });
+  const acrossInput = el('input', { type: 'number', min: '1', max: '20',
+    value: across, ariaLabel: 'Columns', style: 'width:70px' });
+  const downInput = el('input', { type: 'number', min: '1', max: '20',
+    value: down, ariaLabel: 'Rows', style: 'width:70px' });
+  const savePage = el('button', { className: 'btn small', textContent: 'Save page' });
+  savePage.addEventListener('click', async () => {
+    try {
+      await api('/menu-screens/' + screen.id, { method: 'PATCH',
+        body: JSON.stringify({
+          name: nameInput.value.trim(),
+          buttons_across: Number(acrossInput.value),
+          buttons_down: Number(downInput.value),
+        }) });
+      toast('Page saved — tills pull it on their next sync');
+      renderMenu();
+    } catch (ex) { toast(ex.message); }
+  });
+  bar.append(nameInput,
+    el('span', { className: 'muted', textContent: 'grid' }),
+    acrossInput, el('span', { className: 'muted', textContent: '×' }), downInput,
+    savePage);
+  panel.append(bar);
+
+  // ---- the grid ----
+  const grid = el('div', { className: 'menugrid' });
+  grid.style.gridTemplateColumns = `repeat(${across}, minmax(90px, 1fr))`;
+
+  for (let y = 1; y <= down; y++) {
+    for (let x = 1; x <= across; x++) {
+      const b = byCell.get(`${x},${y}`);
+      const cell = el('button', {
+        className: 'cell' + (b ? ' filled' : '')
+          + (b && b.id === heldButtonId ? ' held' : ''),
+        title: b ? `${b.descript}  ·  #${b.prodnum}` : `Empty  (${x}, ${y})`,
+      });
+      if (b) {
+        cell.style.background = b.back_color || '';
+        cell.style.color = b.fore_color || '';
+        cell.append(
+          el('span', { className: 'celltext',
+            textContent: b.button_text || b.descript }),
+          el('span', { className: 'cellprice', textContent: money(b.price_a) }),
+        );
+        if (!b.is_active) cell.append(
+          el('span', { className: 'pill bad', textContent: 'inactive' }));
+      }
+      cell.addEventListener('click', () => onCell(screen, b, x, y));
+      grid.append(cell);
+    }
+  }
+  panel.append(el('div', { className: 'scroll' }, grid));
+
+  const held = buttons.find(b => b.id === heldButtonId);
+  panel.append(el('p', { className: 'note', textContent: held
+    ? `Holding "${held.descript}". Click a cell to move it there — landing on `
+      + 'another button swaps the two. Click it again to put it down.'
+    : 'Click a button to pick it up and move it, or an empty cell to place a '
+      + 'product. Colours and labels come from the product.' }));
+
+  if (held) {
+    const remove = el('button', { className: 'btn small ghost',
+      textContent: `Remove "${held.descript}" from this page` });
+    remove.addEventListener('click', async () => {
+      try {
+        await api('/menu-buttons/' + held.id, { method: 'DELETE' });
+        heldButtonId = null;
+        toast('Removed');
+        renderMenu();
+      } catch (ex) { toast(ex.message); }
+    });
+    panel.append(el('div', { style: 'padding: 0 16px 16px' }, remove));
+  }
+
+  host.replaceChildren(panel);
+}
+
+async function onCell(screen, button, x, y) {
+  // Holding one? Then this click is a destination.
+  if (heldButtonId) {
+    if (button && button.id === heldButtonId) {
+      heldButtonId = null;               // put it back down
+      return renderMenu();
+    }
+    try {
+      await api('/menu-buttons/' + heldButtonId, { method: 'PATCH',
+        body: JSON.stringify({ pos_x: x, pos_y: y }) });
+      heldButtonId = null;
+      renderMenu();
+    } catch (ex) { toast(ex.message); }
+    return;
+  }
+
+  if (button) {
+    heldButtonId = button.id;
+    return renderMenu();
+  }
+
+  const prodnum = await pickProduct();
+  if (!prodnum) return;
+  try {
+    await api(`/menu-screens/${screen.id}/buttons`, { method: 'POST',
+      body: JSON.stringify({ prodnum, pos_x: x, pos_y: y }) });
+    renderMenu();
+  } catch (ex) { toast(ex.message); }
+}
+
+/// A search-as-you-type product chooser. 560 products is far too many for a
+/// dropdown, and staff know items by number as well as name.
+function pickProduct() {
+  return new Promise(resolve => {
+    const back = el('div', { className: 'modal-back' });
+    const box = el('div', { className: 'modal' });
+    const search = el('input', { type: 'search', placeholder: 'Name or number…',
+      ariaLabel: 'Find a product' });
+    const results = el('div', { className: 'list', style: 'max-height:46vh' });
+
+    const close = value => { back.remove(); resolve(value); };
+
+    let timer;
+    const run = async () => {
+      const term = search.value.trim();
+      if (!term) { results.replaceChildren(
+        el('p', { className: 'note', textContent: 'Type to search.' })); return; }
+      try {
+        const rows = await api('/products?search=' + encodeURIComponent(term));
+        results.replaceChildren();
+        if (!rows.length) results.append(
+          el('p', { className: 'note', textContent: 'Nothing matches.' }));
+        for (const p of rows.slice(0, 40)) {
+          const row = el('button', { className: 'listrow' });
+          row.append(
+            el('div', { className: 'listmain' },
+              [el('span', { textContent: p.descript })]),
+            el('div', { className: 'listsub' }, [
+              el('span', { className: 'muted', textContent: '#' + p.prodnum }),
+              el('span', { className: 'muted', textContent: money(p.price_a) }),
+            ]),
+          );
+          row.addEventListener('click', () => close(p.prodnum));
+          results.append(row);
+        }
+      } catch (ex) {
+        results.replaceChildren(el('p', { className: 'err', textContent: ex.message }));
+      }
+    };
+    search.addEventListener('input', () => {
+      clearTimeout(timer); timer = setTimeout(run, 200);
+    });
+
+    const cancel = el('button', { className: 'btn ghost', textContent: 'Cancel' });
+    cancel.addEventListener('click', () => close(null));
+    back.addEventListener('click', e => { if (e.target === back) close(null); });
+
+    box.append(el('h2', { textContent: 'Put a product on this page' }),
+      search, results, el('div', { style: 'margin-top:12px' }, cancel));
+    back.append(box);
+    document.body.append(back);
+    search.focus();
+    run();
+  });
 }
 
 // ---------------------------------------------------------------- devices

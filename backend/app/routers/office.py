@@ -53,6 +53,12 @@ from ..schemas import (
     OfficeEnrolmentOut,
     OfficeLoginIn,
     OfficeLoginOut,
+    OfficeMenuButtonMove,
+    OfficeMenuButtonOut,
+    OfficeMenuButtonPlace,
+    OfficeMenuScreenCreate,
+    OfficeMenuScreenOut,
+    OfficeMenuScreenUpdate,
     OfficeProductCreate,
     OfficeProductOut,
     OfficeProductUpdate,
@@ -555,6 +561,429 @@ async def update_product(
         product.server_version = await _next_catalog_version(session, ctx.tenant_id)
         await session.flush()
         return _product_out(product)
+
+
+# --------------------------------------------------------------------------
+# Menu layout
+#
+# An order page is a grid of buttons, and where a button sits is the thing
+# staff actually navigate by — they reach for a position long before they read
+# a label. So this works in (x, y), not list order.
+# --------------------------------------------------------------------------
+
+async def _bump_menu(session, tenant_id: uuid.UUID, *rows) -> int:
+    """Stamp a menu change so tills pull it. Without this the layout changes
+    in the back office and on no till."""
+    version = await _next_catalog_version(session, tenant_id)
+    for row in rows:
+        row.server_version = version
+    return version
+
+
+@router.get("/menu-screens", response_model=list[OfficeMenuScreenOut])
+async def list_menu_screens(
+    include_modifier: bool = False,
+    ctx: OfficeContext = OfficeDep,
+) -> list[OfficeMenuScreenOut]:
+    async with tenant_session(ctx.tenant_id) as session:
+        stmt = select(MenuScreen).where(
+            MenuScreen.tenant_id == ctx.tenant_id,
+            MenuScreen.is_deleted.is_(False),
+        )
+        if not include_modifier:
+            stmt = stmt.where(MenuScreen.is_modifier_screen.is_(False))
+        screens = list(
+            (await session.execute(
+                stmt.order_by(MenuScreen.sort_order, MenuScreen.name)
+            )).scalars().all()
+        )
+
+        # Counts and the space the existing buttons need, in one pass rather
+        # than a query per page — there are 64 of them.
+        usage = {
+            menu_id: (count, across or 0, down or 0)
+            for menu_id, count, across, down in (
+                await session.execute(
+                    select(
+                        MenuButton.menu_id,
+                        func.count(MenuButton.id),
+                        func.max(MenuButton.pos_x),
+                        func.max(MenuButton.pos_y),
+                    )
+                    .where(
+                        MenuButton.tenant_id == ctx.tenant_id,
+                        MenuButton.is_deleted.is_(False),
+                    )
+                    .group_by(MenuButton.menu_id)
+                )
+            ).all()
+        }
+
+    return [
+        OfficeMenuScreenOut(
+            id=s.id,
+            menu_id=s.menu_id,
+            name=s.name,
+            name_ar=s.name_ar,
+            sort_order=s.sort_order,
+            buttons_across=s.buttons_across or None,
+            buttons_down=s.buttons_down or None,
+            is_modifier_screen=s.is_modifier_screen,
+            is_active=s.is_active,
+            button_count=usage.get(s.menu_id, (0, 0, 0))[0],
+            used_across=usage.get(s.menu_id, (0, 0, 0))[1],
+            used_down=usage.get(s.menu_id, (0, 0, 0))[2],
+        )
+        for s in screens
+    ]
+
+
+@router.post("/menu-screens", response_model=OfficeMenuScreenOut, status_code=201)
+async def create_menu_screen(
+    body: OfficeMenuScreenCreate,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeMenuScreenOut:
+    async with tenant_session(ctx.tenant_id) as session:
+        clash = (
+            await session.execute(
+                select(MenuScreen).where(
+                    MenuScreen.tenant_id == ctx.tenant_id,
+                    MenuScreen.menu_id == body.menu_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if clash is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"page number {body.menu_id} is already {clash.name}",
+            )
+
+        branch = (
+            await session.execute(
+                select(Branch.id).where(Branch.tenant_id == ctx.tenant_id)
+            )
+        ).scalars().first()
+
+        screen = MenuScreen(
+            tenant_id=ctx.tenant_id,
+            branch_id=branch,
+            server_version=await _next_catalog_version(session, ctx.tenant_id),
+            **body.model_dump(),
+        )
+        session.add(screen)
+        await session.flush()
+
+    return OfficeMenuScreenOut(
+        id=screen.id, menu_id=screen.menu_id, name=screen.name,
+        name_ar=screen.name_ar, sort_order=screen.sort_order,
+        buttons_across=screen.buttons_across, buttons_down=screen.buttons_down,
+        is_modifier_screen=screen.is_modifier_screen,
+        is_active=screen.is_active,
+    )
+
+
+@router.patch("/menu-screens/{screen_id}", response_model=OfficeMenuScreenOut)
+async def update_menu_screen(
+    screen_id: uuid.UUID,
+    body: OfficeMenuScreenUpdate,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeMenuScreenOut:
+    fields = body.model_dump(exclude_unset=True)
+    if not fields:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "nothing to change")
+
+    async with tenant_session(ctx.tenant_id) as session:
+        screen = (
+            await session.execute(
+                select(MenuScreen).where(
+                    MenuScreen.id == screen_id,
+                    MenuScreen.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if screen is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such page")
+
+        # Shrinking a grid below the buttons on it would hide them from every
+        # till while leaving them in the database — invisible and still sold
+        # by number. Refuse and say which corner is in the way.
+        used = (
+            await session.execute(
+                select(func.max(MenuButton.pos_x), func.max(MenuButton.pos_y))
+                .where(
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.menu_id == screen.menu_id,
+                    MenuButton.is_deleted.is_(False),
+                )
+            )
+        ).one()
+        used_x, used_y = used[0] or 0, used[1] or 0
+        across = fields.get("buttons_across", screen.buttons_across)
+        down = fields.get("buttons_down", screen.buttons_down)
+        if across and across < used_x:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"a button sits in column {used_x}; move it before making the "
+                f"page {across} wide",
+            )
+        if down and down < used_y:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"a button sits in row {used_y}; move it before making the "
+                f"page {down} tall",
+            )
+
+        for key, value in fields.items():
+            setattr(screen, key, value)
+        await _bump_menu(session, ctx.tenant_id, screen)
+        await session.flush()
+
+        count = (
+            await session.execute(
+                select(func.count(MenuButton.id)).where(
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.menu_id == screen.menu_id,
+                    MenuButton.is_deleted.is_(False),
+                )
+            )
+        ).scalar() or 0
+
+    return OfficeMenuScreenOut(
+        id=screen.id, menu_id=screen.menu_id, name=screen.name,
+        name_ar=screen.name_ar, sort_order=screen.sort_order,
+        buttons_across=screen.buttons_across, buttons_down=screen.buttons_down,
+        is_modifier_screen=screen.is_modifier_screen,
+        is_active=screen.is_active, button_count=count,
+        used_across=used_x, used_down=used_y,
+    )
+
+
+@router.get(
+    "/menu-screens/{screen_id}/buttons",
+    response_model=list[OfficeMenuButtonOut],
+)
+async def list_menu_buttons(
+    screen_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> list[OfficeMenuButtonOut]:
+    async with tenant_session(ctx.tenant_id) as session:
+        screen = (
+            await session.execute(
+                select(MenuScreen).where(
+                    MenuScreen.id == screen_id,
+                    MenuScreen.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if screen is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such page")
+
+        rows = (
+            await session.execute(
+                select(MenuButton, Product)
+                .join(
+                    Product,
+                    (Product.prodnum == MenuButton.prodnum)
+                    & (Product.tenant_id == MenuButton.tenant_id),
+                    isouter=True,
+                )
+                .where(
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.menu_id == screen.menu_id,
+                    MenuButton.is_deleted.is_(False),
+                )
+                .order_by(MenuButton.pos_y, MenuButton.pos_x)
+            )
+        ).all()
+
+    return [
+        OfficeMenuButtonOut(
+            id=b.id,
+            prodnum=b.prodnum,
+            pos_x=b.pos_x or 1,
+            pos_y=b.pos_y or 1,
+            descript=p.descript if p else f"(missing product {b.prodnum})",
+            button_text=p.button_text if p else None,
+            fore_color=p.fore_color if p else None,
+            back_color=p.back_color if p else None,
+            price_a=p.price_a if p else 0,
+            is_active=bool(p.is_active) if p else False,
+        )
+        for b, p in rows
+    ]
+
+
+@router.post(
+    "/menu-screens/{screen_id}/buttons",
+    response_model=OfficeMenuButtonOut,
+    status_code=201,
+)
+async def place_menu_button(
+    screen_id: uuid.UUID,
+    body: OfficeMenuButtonPlace,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeMenuButtonOut:
+    """Put a product on a page at a cell."""
+    async with tenant_session(ctx.tenant_id) as session:
+        screen = (
+            await session.execute(
+                select(MenuScreen).where(
+                    MenuScreen.id == screen_id,
+                    MenuScreen.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if screen is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such page")
+
+        product = (
+            await session.execute(
+                select(Product).where(
+                    Product.tenant_id == ctx.tenant_id,
+                    Product.prodnum == body.prodnum,
+                    Product.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if product is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"no product numbered {body.prodnum}",
+            )
+
+        occupant = (
+            await session.execute(
+                select(MenuButton).where(
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.menu_id == screen.menu_id,
+                    MenuButton.pos_x == body.pos_x,
+                    MenuButton.pos_y == body.pos_y,
+                    MenuButton.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if occupant is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"that cell already holds product {occupant.prodnum}",
+            )
+
+        button = MenuButton(
+            tenant_id=ctx.tenant_id,
+            menu_screen_id=screen.id,
+            product_id=product.id,
+            menu_id=screen.menu_id,
+            prodnum=product.prodnum,
+            pos_x=body.pos_x,
+            pos_y=body.pos_y,
+            # Row-major, so a till that ignores the grid still shows buttons
+            # in the order they read on the page.
+            position=(body.pos_y - 1) * 100 + body.pos_x,
+            server_version=await _next_catalog_version(session, ctx.tenant_id),
+        )
+        session.add(button)
+        await session.flush()
+
+    return OfficeMenuButtonOut(
+        id=button.id, prodnum=product.prodnum,
+        pos_x=button.pos_x, pos_y=button.pos_y,
+        descript=product.descript, button_text=product.button_text,
+        fore_color=product.fore_color, back_color=product.back_color,
+        price_a=product.price_a, is_active=product.is_active,
+    )
+
+
+@router.patch("/menu-buttons/{button_id}", response_model=OfficeMenuButtonOut)
+async def move_menu_button(
+    button_id: uuid.UUID,
+    body: OfficeMenuButtonMove,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeMenuButtonOut:
+    async with tenant_session(ctx.tenant_id) as session:
+        button = (
+            await session.execute(
+                select(MenuButton).where(
+                    MenuButton.id == button_id,
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if button is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such button")
+
+        occupant = (
+            await session.execute(
+                select(MenuButton).where(
+                    MenuButton.tenant_id == ctx.tenant_id,
+                    MenuButton.menu_id == button.menu_id,
+                    MenuButton.pos_x == body.pos_x,
+                    MenuButton.pos_y == body.pos_y,
+                    MenuButton.id != button.id,
+                    MenuButton.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+
+        if occupant is not None:
+            # Swap rather than refuse: dragging one button onto another is a
+            # rearrangement, and making someone empty a cell first is busywork.
+            occupant.pos_x, occupant.pos_y = button.pos_x, button.pos_y
+            occupant.position = (occupant.pos_y - 1) * 100 + occupant.pos_x
+            await _bump_menu(session, ctx.tenant_id, occupant)
+
+        button.pos_x, button.pos_y = body.pos_x, body.pos_y
+        button.position = (body.pos_y - 1) * 100 + body.pos_x
+        await _bump_menu(session, ctx.tenant_id, button)
+        await session.flush()
+
+        product = (
+            await session.execute(
+                select(Product).where(
+                    Product.tenant_id == ctx.tenant_id,
+                    Product.prodnum == button.prodnum,
+                )
+            )
+        ).scalar_one_or_none()
+
+    return OfficeMenuButtonOut(
+        id=button.id, prodnum=button.prodnum,
+        pos_x=button.pos_x, pos_y=button.pos_y,
+        descript=product.descript if product else "",
+        button_text=product.button_text if product else None,
+        fore_color=product.fore_color if product else None,
+        back_color=product.back_color if product else None,
+        price_a=product.price_a if product else 0,
+        is_active=bool(product.is_active) if product else False,
+    )
+
+
+@router.delete("/menu-buttons/{button_id}", status_code=204)
+async def remove_menu_button(
+    button_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> None:
+    """Take a button off a page.
+
+    Soft delete, and not only because the application role has no DELETE
+    grant: a device pulling incrementally learns that a button is gone by
+    seeing the row marked deleted. A hard delete is invisible to it, and the
+    button would stay on the till for good.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        button = (
+            await session.execute(
+                select(MenuButton).where(
+                    MenuButton.id == button_id,
+                    MenuButton.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if button is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such button")
+
+        button.is_deleted = True
+        await _bump_menu(session, ctx.tenant_id, button)
 
 
 # --------------------------------------------------------------------------
