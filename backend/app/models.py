@@ -256,6 +256,17 @@ class Product(Base):
     print_loc: Mapped[int] = mapped_column(Integer, default=0, server_default=sa_text("0"))
     ref_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     unit_des: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # ---- how the button looks on a till ---------------------------------
+    # The label a cashier reads, newline-separated. Deliberately not the
+    # description: 308 of 560 imported products differ, because a tile has to
+    # fit "(BSP) broasted / strip pizza" and the full name does not.
+    button_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # '#RRGGBB', or NULL meaning "use the theme". The imported menu has 28
+    # distinct backgrounds — a deliberate colour-coded layout that staff
+    # navigate by sight. Dropping it would make a familiar menu unfamiliar on
+    # the first day of a migration, which is the worst possible day for that.
+    fore_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
+    back_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
     server_version: Mapped[int] = mapped_column(BigInteger, index=True)

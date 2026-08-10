@@ -85,7 +85,16 @@ SELECT PRODNUM, DESCRIPT, PRINTDES, PrintDes2, REFCODE, UnitDes,
        PRICEA, PRICEB, PRICEC, PRICED, PRICEE,
        PRICEF, PRICEG, PRICEH, PRICEI, PRICEJ,
        REPORTNO, PRODTYPE, TAX1, TEXEMPT,
-       ISWEIGHED, ManualPrice, ISACTIVE, PRINTLOC
+       ISWEIGHED, ManualPrice, ISACTIVE, PRINTLOC,
+       -- The till button as staff know it. BUTTON1..3 are the label lines,
+       -- which are deliberately not the product name: 308 of 560 differ and
+       -- 250 carry a second line, because "(BSP) broasted strip pizza" has to
+       -- fit on a tile. FORCOLOR/BACKCOLOR are a real colour-coded menu — 28
+       -- distinct backgrounds — and that colour is how a cashier finds an item
+       -- without reading it.
+       BUTTON1, BUTTON2, BUTTON3, FORCOLOR, BACKCOLOR,
+       -- Hot or cold. Set on 290 products; the kitchen cares.
+       PrepTemp
 FROM DBA.Product
 """
 

@@ -205,6 +205,16 @@ input.price { width: 100px; text-align: right; font-variant-numeric: tabular-num
 .prices input { text-align: right; font-variant-numeric: tabular-nums; }
 .checks { display: flex; flex-wrap: wrap; gap: 8px 20px; }
 .checks .check { margin: 0; }
+textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg); font: inherit; resize: vertical;
+}
+input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.tile-preview {
+  border: 1px solid var(--border); border-radius: 10px; padding: 10px;
+  min-height: 84px; display: flex; align-items: flex-start;
+  font-size: 13px; font-weight: 600; white-space: pre-line; line-height: 1.3;
+}
 
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
@@ -688,8 +698,62 @@ async function openProduct(id) {
     'Station numbers are the printer ports carried over from the old system, ' +
     'so imported routing keeps working. Nothing ticked means no kitchen ticket.' }));
 
+  // ---- till button ----
+  form.append(el('h3', { className: 'sub-head', textContent: 'Till button' }));
+  form.append(el('p', { className: 'hint', textContent:
+    'What the cashier sees. The label is separate from the description ' +
+    'because a tile has to fit it, and the colour is how staff find an item ' +
+    'before they read it — the imported menu uses 28 of them.' }));
+
+  const btnRow = el('div', { className: 'row' });
+  const btnText = el('textarea', { rows: 3, value: p.button_text || '',
+    placeholder: p.descript, ariaLabel: 'Button label' });
+  fields.button_text = btnText;
+
+  const colour = (key, label) => {
+    const value = p[key];
+    const picker = el('input', { type: 'color', value: value || '#FFFFFF',
+      ariaLabel: label, disabled: !value });
+    const useTheme = el('input', { type: 'checkbox', checked: !value,
+      ariaLabel: label + ': use the theme' });
+    useTheme.addEventListener('change', () => {
+      picker.disabled = useTheme.checked;
+      preview();
+    });
+    picker.addEventListener('input', preview);
+    fields[key] = { picker, useTheme };
+    return el('div', {}, [
+      picker,
+      el('label', { className: 'check' }, [useTheme,
+        el('span', { textContent: 'Use theme' })]),
+    ]);
+  };
+
+  const previewTile = el('div', { className: 'tile-preview' });
+  function preview() {
+    const back = fields.back_color.useTheme.checked
+      ? '' : fields.back_color.picker.value;
+    const fore = fields.fore_color.useTheme.checked
+      ? '' : fields.fore_color.picker.value;
+    previewTile.style.background = back || 'var(--surface)';
+    previewTile.style.color = fore || 'var(--text)';
+    previewTile.textContent =
+      (btnText.value || fields.descript.value || p.descript || '').trim();
+  }
+  btnText.addEventListener('input', preview);
+
+  btnRow.append(
+    field('Button label', btnText, 'One line per row. Blank uses the description.'),
+    field('Background', colour('back_color', 'Button background')),
+    field('Text colour', colour('fore_color', 'Button text colour')),
+    field('Preview', previewTile),
+  );
+  form.append(btnRow);
+  preview();
+
   // ---- flags ----
   form.append(el('h3', { className: 'sub-head', textContent: 'Behaviour' }));
+
   const flags = el('div', { className: 'checks' });
   const flag = (key, label, hint) => {
     const box = el('input', { type: 'checkbox', checked: !!p[key],
@@ -769,6 +833,14 @@ async function openProduct(id) {
     for (const key of ['is_active', 'tax_applies', 'is_weighed',
                        'manual_price', 'is_modifier']) {
       put(key, fields[key].checked);
+    }
+
+    put('button_text', fields.button_text.value.trim() || null);
+    for (const key of ['fore_color', 'back_color']) {
+      const { picker, useTheme } = fields[key];
+      // Uppercase to match what the migration writes, so a save with no
+      // visible change does not register as one.
+      put(key, useTheme.checked ? null : picker.value.toUpperCase());
     }
 
     if (!isNew && !Object.keys(body).length) return toast('Nothing changed');

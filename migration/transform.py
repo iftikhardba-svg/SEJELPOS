@@ -51,6 +51,48 @@ def truthy(v) -> bool:
     return bool(v) and v not in (0, "0")
 
 
+def tcolor_to_hex(value) -> str | None:
+    """Delphi TColor -> '#RRGGBB'.
+
+    PixelPoint is a Delphi application, so colours are stored as $00BBGGRR —
+    the byte order is the reverse of what everyone expects, and reading it as
+    RGB turns their pink buttons blue.
+
+    Negative values are Windows *system* colours (clWindowText and friends)
+    rather than literal ones. There is no honest fixed translation for those —
+    they mean "whatever the OS theme says" — so they become None and the till
+    falls back to its own theme, which is the same intent.
+    """
+    if value is None:
+        return None
+    try:
+        raw = int(value)
+    except (TypeError, ValueError):
+        return None
+    if raw < 0:
+        return None
+    return "#{:02X}{:02X}{:02X}".format(
+        raw & 0xFF,          # RR is the low byte
+        (raw >> 8) & 0xFF,   # GG
+        (raw >> 16) & 0xFF,  # BB
+    )
+
+
+def button_lines(row: dict) -> str | None:
+    """BUTTON1..3 joined into the label a cashier actually reads.
+
+    Kept separate from the description on purpose: 308 of 560 products differ,
+    because a tile has to fit "(BSP) broasted / strip pizza" on two lines and
+    the full name does not.
+    """
+    lines = [
+        (row.get(f"BUTTON{n}") or "").strip()
+        for n in (1, 2, 3)
+    ]
+    text = "\n".join(line for line in lines if line)
+    return text or None
+
+
 def derive_vat_percent(tax_sample: list[dict]) -> Decimal | None:
     """Recover the effective VAT rate from real sales, to check our assumption."""
     rates = []
@@ -178,6 +220,17 @@ def transform(src: dict, tenant_id: str, company_id: str, branch_id: str) -> dic
             "report_no": p.get("REPORTNO")
             if p.get("REPORTNO") in known_report_nos else None,
             "prodtype": p["PRODTYPE"],
+            # How the button looks on the till. Not decoration: 28 distinct
+            # background colours is a deliberate colour-coded menu, and it is
+            # how staff find an item without reading it.
+            "button_text": button_lines(p),
+            "fore_color": tcolor_to_hex(p.get("FORCOLOR")),
+            "back_color": tcolor_to_hex(p.get("BACKCOLOR")),
+            # PrepTemp (the "Item Type: Hot / Cold / Use Report Cat." radio)
+            # is deliberately NOT carried. In this data 290 products say "use
+            # the report category" and all 28 categories say "none", so not a
+            # single item is marked hot or cold anywhere. Importing it would
+            # add a column nothing sets and nothing reads.
             # TEXEMPT marks a product exempt from tax; TAX1 marks VAT applicable.
             "tax_applies": truthy(p["TAX1"]) and not truthy(p["TEXEMPT"]),
             "is_weighed": truthy(p["ISWEIGHED"]),

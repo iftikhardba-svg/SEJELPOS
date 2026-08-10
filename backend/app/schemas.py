@@ -560,6 +560,11 @@ class OfficeProductOut(BaseModel):
     prodtype: int | None = None
     ref_code: str | None = None
     unit_des: str | None = None
+    # How the till button looks. The imported menu is colour-coded — staff
+    # find items by colour before they read them.
+    button_text: str | None = None
+    fore_color: str | None = None
+    back_color: str | None = None
     server_version: int
     # Which menu screens this product sits on. Read-only here - moving
     # buttons around is a menu-layout job, not a product one.
@@ -597,6 +602,11 @@ class OfficeProductUpdate(BaseModel):
     prodtype: int | None = Field(default=None, ge=0)
     ref_code: str | None = None
     unit_des: str | None = None
+    button_text: str | None = None
+    # '#RRGGBB' or null for "use the theme". Validated so a typo cannot reach
+    # a till and render as nothing.
+    fore_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    back_color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
 class OfficeProductCreate(BaseModel):
