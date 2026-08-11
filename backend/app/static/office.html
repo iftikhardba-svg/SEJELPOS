@@ -313,6 +313,7 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
     <button data-tab="dashboard" class="on">Dashboard</button>
     <button data-tab="products">Products &amp; prices</button>
     <button data-tab="menu">Menu layout</button>
+    <button data-tab="tables">Tables</button>
     <button data-tab="floor">Floor plan</button>
     <button data-tab="devices">Devices</button>
     <button data-tab="sales">Sales</button>
@@ -321,6 +322,7 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
     <section id="tab-dashboard"></section>
     <section id="tab-products" class="hidden"></section>
     <section id="tab-menu" class="hidden"></section>
+    <section id="tab-tables" class="hidden"></section>
     <section id="tab-floor" class="hidden"></section>
     <section id="tab-devices" class="hidden"></section>
     <section id="tab-sales" class="hidden"></section>
@@ -443,9 +445,13 @@ document.querySelectorAll('nav button').forEach(b =>
 
 function show(tab) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  ['dashboard', 'products', 'menu', 'floor', 'devices', 'sales'].forEach(t =>
-    $('#tab-' + t).classList.toggle('hidden', t !== tab));
+  // Read the sections off the page rather than keeping a second list of them
+  // here: adding a tab and forgetting this line renders it and leaves it
+  // hidden, which looks exactly like a tab that does nothing.
+  document.querySelectorAll('main > section[id^="tab-"]').forEach(sec =>
+    sec.classList.toggle('hidden', sec.id !== 'tab-' + tab));
   ({ dashboard: renderDashboard, products: renderProducts, menu: renderMenu,
+   tables: renderTables,
      floor: renderFloor, devices: renderDevices, sales: renderSales })[tab]();
 }
 
@@ -760,13 +766,16 @@ async function openProduct(id) {
   // ---- forced questions ----
   // PixelPoint's five ordered slots. A prompt asks the cashier to choose
   // something that comes with the item — "1 DRINKS", "Bread Selection" — and
-  // the choice is rung and sent to the kitchen with the meal.
-  form.append(el('h3', { className: 'sub-head', textContent: 'Forced questions' }));
+  // the choice is rung and sent to the kitchen with the meal. Called
+  // modifiers on screen, which is the trade's word; the tables behind them
+  // keep PixelPoint's "question" naming, which is what every row and every
+  // catalog family is named after.
+  form.append(el('h3', { className: 'sub-head', textContent: 'Modifiers' }));
   const qSlots = [];
   const qBox = el('div');
   for (let slot = 0; slot < 5; slot++) {
-    const sel = el('select', { ariaLabel: 'Question ' + (slot + 1) });
-    sel.append(el('option', { value: '', textContent: 'NO QUESTION' }));
+    const sel = el('select', { ariaLabel: 'Modifier ' + (slot + 1) });
+    sel.append(el('option', { value: '', textContent: 'NO MODIFIER' }));
     for (const q of questions) {
       const pick = q.pick_count > 1 ? ` — pick ${q.pick_count}` : '';
       sel.append(el('option', {
@@ -780,9 +789,9 @@ async function openProduct(id) {
   }
   form.append(qBox);
   form.append(el('p', { className: 'hint', textContent:
-    'Asked in this order when the item is rung. Leave a slot on NO QUESTION '
-    + 'to skip it. A prompt with no choices configured cannot be answered, so '
-    + 'the till would stall on it.' }));
+    'Asked in this order when the item is rung. Leave a slot on NO MODIFIER '
+    + 'to skip it. A modifier with no choices configured cannot be answered, '
+    + 'so the till would stall on it.' }));
 
   // ---- till button ----
   form.append(el('h3', { className: 'sub-head', textContent: 'Till button' }));
@@ -925,7 +934,7 @@ async function openProduct(id) {
     // the list rather than patching a slot at a time.
     const chosen = qSlots.map(s => s.value).filter(Boolean).map(Number);
     if (new Set(chosen).size !== chosen.length) {
-      return toast('The same question cannot be asked twice for one item');
+      return toast('The same modifier cannot be asked twice for one item');
     }
     if (isNew || chosen.join(',') !== p.question_nos.join(',')) {
       body.question_nos = chosen;
@@ -1999,9 +2008,9 @@ async function openArea(area) {
   const held = tables.find(t => t.id === heldTableId);
   p.append(el('p', { className: 'note', textContent: held
     ? `Holding table ${held.table_no}. Click a square to move it there.`
-    : 'Click a table to pick it up and move it, or an empty square to add one. '
-      + 'A table with somebody sitting at it cannot be moved — settle it '
-      + 'first.' }));
+    : 'Click a table to pick it up and move it, or an empty square to call a '
+      + 'table onto it. Tables themselves are set up under Tables. A table '
+      + 'with somebody sitting at it cannot be moved — settle it first.' }));
 
   const retired = tables.filter(t => !t.is_active).length;
   if (retired) {
@@ -2017,6 +2026,267 @@ async function openArea(area) {
   }
 
   host.replaceChildren(p);
+}
+
+// ---- the tables master --------------------------------------------------
+//
+// What a table IS and where it sits are two different facts. Its number, what
+// staff call it, how many it seats and whether it is in service belong to the
+// restaurant; where it sits belongs to a room. So they are two screens, the
+// same way products are a master and the menu layout places them: set the
+// tables up here, then call them onto a plan in Floor plan.
+
+let tableSearch = '';
+let showRetiredMaster = false;
+
+async function renderTables() {
+  loading('tables');
+  try {
+    const tables = await api('/tables?include_inactive=true');
+    const wrap = el('div', { className: 'panel' });
+
+    const bar = el('div', { className: 'toolbar' });
+    const search = el('input', { type: 'search', value: tableSearch,
+      placeholder: 'Number or name…', ariaLabel: 'Search tables',
+      style: 'max-width:220px' });
+    search.addEventListener('change', () => {
+      tableSearch = search.value.trim(); renderTables();
+    });
+    const add = el('button', { className: 'btn small', textContent: 'New table' });
+    add.addEventListener('click', () => newMasterTable(tables));
+    const retiredCount = tables.filter(t => !t.is_active).length;
+    const toggle = el('button', { className: 'btn small ghost',
+      textContent: showRetiredMaster
+        ? 'Hide out of service (' + retiredCount + ')'
+        : 'Show out of service (' + retiredCount + ')' });
+    toggle.addEventListener('click', () => {
+      showRetiredMaster = !showRetiredMaster; renderTables();
+    });
+    bar.append(search, add, toggle);
+
+    const needle = tableSearch.toLowerCase();
+    const shown = tables.filter(t =>
+      (showRetiredMaster || t.is_active)
+      && (!needle
+        || String(t.table_no).includes(needle)
+        || (t.label || '').toLowerCase().includes(needle)));
+
+    const onPlan = tables.filter(t => t.section_id).length;
+    wrap.append(
+      el('h2', { textContent: 'Tables' }),
+      el('p', { className: 'note', textContent:
+        `${tables.length} set up · ${onPlan} on a plan · `
+        + `${tables.length - onPlan} off it. A table off every plan still `
+        + `exists — call it onto a room in Floor plan when you need it.` }),
+      bar);
+
+    const list = el('div', { className: 'list' });
+    for (const t of shown) {
+      const row = el('button', { className: 'listrow' });
+      row.append(
+        el('div', { className: 'listmain' }, [
+          el('span', { textContent: 'Table ' + t.table_no
+            + (t.label ? ' · ' + t.label : '') }),
+          t.is_active ? el('span')
+            : el('span', { className: 'pill bad', textContent: 'out of service' }),
+          t.in_use ? el('span', { className: 'pill', textContent: 'in use' })
+            : el('span'),
+        ]),
+        el('div', { className: 'listsub' }, [
+          el('span', { className: 'muted', textContent: t.seats + ' seats' }),
+          el('span', { className: 'muted', textContent: t.section_name
+            || 'not on a plan' }),
+          el('span', { className: 'muted', textContent: t.can_reserve
+            ? 'bookable' : 'not bookable' }),
+        ]),
+      );
+      row.addEventListener('click', () => editMasterTable(t));
+      list.append(row);
+    }
+    if (!shown.length) {
+      list.append(el('p', { className: 'note', textContent: tables.length
+        ? 'Nothing matches that.'
+        : 'No tables yet. Add the room’s tables here, then arrange them on a '
+          + 'plan in Floor plan.' }));
+    }
+    wrap.append(list);
+    $('#tab-tables').replaceChildren(wrap);
+  } catch (ex) {
+    $('#tab-tables').replaceChildren(
+      el('p', { className: 'err', textContent: ex.message }));
+  }
+}
+
+/// The fields that belong to the table itself. Where it goes is not among
+/// them — that is the floor plan's job.
+function tableFields(t) {
+  return [
+    { name: 'table_no', label: 'Table number', type: 'number',
+      value: t ? t.table_no : '', min: 1,
+      hint: 'What staff and receipts call it. Unique across the branch.' },
+    { name: 'seats', label: 'Seats', type: 'number',
+      value: t ? t.seats : 2, min: 1, max: 99,
+      hint: 'The till refuses to seat a party bigger than this.' },
+    { name: 'max_seats', label: 'Seats at a squeeze', type: 'number',
+      value: t && t.max_seats ? t.max_seats : '', min: 1, max: 99,
+      hint: 'Optional. Leave blank to use the seats above.' },
+    { name: 'label', label: 'Name (optional)',
+      value: t ? (t.label || '') : '',
+      placeholder: 'By the window, Booth 3…' },
+    { name: 'can_reserve', label: 'Can be booked', type: 'select',
+      value: t ? String(t.can_reserve) : 'true',
+      options: [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }] },
+  ];
+}
+
+function readTable(v) {
+  const number = Number(v.table_no);
+  const seats = Number(v.seats);
+  if (!Number.isInteger(number) || number < 1) {
+    return { error: 'Table numbers are whole numbers from 1.' };
+  }
+  if (!Number.isInteger(seats) || seats < 1) {
+    return { error: 'A table seats at least one.' };
+  }
+  const most = v.max_seats === '' ? null : Number(v.max_seats);
+  if (most !== null && (!Number.isInteger(most) || most < seats)) {
+    return { error: 'Seats at a squeeze cannot be fewer than the seats.' };
+  }
+  return { body: {
+    table_no: number,
+    seats,
+    max_seats: most,
+    label: v.label || null,
+    can_reserve: v.can_reserve === 'true',
+  } };
+}
+
+async function newMasterTable(tables) {
+  // Suggest the next free number across the branch: table numbers are
+  // branch-wide, and two of them is a bill nobody can place.
+  const suggested = tables.length
+    ? Math.max(...tables.map(t => t.table_no)) + 1 : 1;
+  const done = await formModal({
+    title: 'New table',
+    confirm: 'Add table',
+    fields: tableFields({ table_no: suggested, seats: 2, label: '',
+      max_seats: null, can_reserve: true }),
+    submit: async v => {
+      const read = readTable(v);
+      if (read.error) return read.error;
+      try {
+        // No area: it goes on the books, and onto a plan when somebody
+        // decides where it belongs.
+        await api('/tables', { method: 'POST', body: JSON.stringify(read.body) });
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!done) return;
+  toast('Table added — put it on a plan in Floor plan');
+  renderTables();
+}
+
+async function editMasterTable(t) {
+  const fields = tableFields(t);
+  const done = await formModal({
+    title: 'Table ' + t.table_no,
+    confirm: 'Save',
+    fields,
+    submit: async v => {
+      const read = readTable(v);
+      if (read.error) return read.error;
+      try {
+        await api('/tables/' + t.id, { method: 'PATCH',
+          body: JSON.stringify(read.body) });
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!done) {
+    return tableActions(t);
+  }
+  toast('Saved — tills show it on their next look at the floor');
+  renderTables();
+}
+
+/// Cancelling the edit lands here: taking a table in or out of service, and
+/// off a plan, are not edits to a field. They are decisions, and each one has
+/// a reason to be refused.
+async function tableActions(t) {
+  const choice = await formModal({
+    title: 'Table ' + t.table_no,
+    confirm: 'Do it',
+    fields: [
+      { name: 'what', label: 'What would you like to do?', type: 'select',
+        value: 'nothing',
+        options: [
+          { value: 'nothing', label: 'Nothing' },
+          t.is_active
+            ? { value: 'retire', label: 'Take out of service' }
+            : { value: 'restore', label: 'Put back in service' },
+          ...(t.section_id
+            ? [{ value: 'unplace', label: 'Take off the plan (' + t.section_name + ')' }]
+            : []),
+        ] },
+    ],
+    submit: async v => {
+      if (v.what === 'nothing') return null;
+      try {
+        if (v.what === 'unplace') {
+          await api('/tables/' + t.id + '/place', { method: 'DELETE' });
+        } else {
+          await api('/tables/' + t.id, { method: 'PATCH',
+            body: JSON.stringify({ is_active: v.what === 'restore' }) });
+        }
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!choice || choice.what === 'nothing') return;
+  toast(choice.what === 'unplace'
+    ? 'Taken off the plan — it is still on the books'
+    : (choice.what === 'restore' ? 'Back in service' : 'Out of service'));
+  renderTables();
+}
+
+/// Call an existing table onto a square. The floor plan arranges tables; it
+/// does not invent them.
+async function callTable(area, x, y) {
+  let free;
+  try {
+    free = await api('/tables?placed=false');
+  } catch (ex) { return toast(ex.message); }
+
+  if (!free.length) {
+    return toast('Every table is already on a plan. Add one in Tables, or '
+      + 'take one off another plan first.');
+  }
+
+  const done = await formModal({
+    title: 'Which table goes here?',
+    confirm: 'Put it here',
+    fields: [
+      { name: 'table_id', label: 'Table', type: 'select',
+        value: free[0].id,
+        options: free.map(t => ({
+          value: t.id,
+          label: 'Table ' + t.table_no + (t.label ? ' · ' + t.label : '')
+            + ' · ' + t.seats + ' seats',
+        })),
+        hint: free.length + ' tables are set up and not on any plan.' },
+    ],
+    submit: async v => {
+      try {
+        await api('/tables/' + v.table_id + '/place', { method: 'POST',
+          body: JSON.stringify({ section_id: area.id, pos_x: x, pos_y: y }) });
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!done) return;
+  toast('Placed — tills show it on their next look at the floor');
+  renderFloor();
 }
 
 async function onTableCell(area, table, x, y) {
@@ -2037,7 +2307,11 @@ async function onTableCell(area, table, x, y) {
   }
 
   if (table) return editTable(area, table);
-  newTable(area, [], { x, y });
+  // An empty square asks which existing table goes here. Setting a table up
+  // and deciding where it sits are different decisions, and a floor plan that
+  // creates furniture every time somebody taps a gap ends up with four
+  // "table 12"s.
+  callTable(area, x, y);
 }
 
 async function newTable(area, tables, at) {

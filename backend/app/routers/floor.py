@@ -107,6 +107,10 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
                         DiningTable.tenant_id == ctx.tenant_id,
                         DiningTable.branch_id == ctx.branch_id,
                         DiningTable.is_deleted.is_(False),
+                        # A table off every plan is on the books, not in the
+                        # room. Sending it would put it in whichever area
+                        # sorted first, which is not where it is.
+                        DiningTable.section_id.is_not(None),
                     )
                     .order_by(DiningTable.table_no)
                 )

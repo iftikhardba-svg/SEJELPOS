@@ -1026,7 +1026,13 @@ class DiningTable(Base):
     id: Mapped[uuid.UUID] = _uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
     branch_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("branch.id"), index=True)
-    section_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("floor_section.id"))
+    # Null while the table is on the books and off the floor. A table and its
+    # place on a plan are two different facts: what a table is belongs to the
+    # restaurant, where it sits belongs to a room, and a restaurant rearranges
+    # rooms without inventing new tables.
+    section_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("floor_section.id"), nullable=True
+    )
     table_no: Mapped[int] = mapped_column(Integer)
     label: Mapped[str | None] = mapped_column(String(32), nullable=True)
     seats: Mapped[int] = mapped_column(Integer, default=2, server_default=sa_text("2"))

@@ -48,6 +48,7 @@ def main(path: str) -> int:
     added_tables: list[str] = []
     added_columns: list[str] = []
     refused: list[str] = []
+    drifted: list[str] = []
 
     for table in Base.metadata.sorted_tables:
         if table.name not in existing:
@@ -57,9 +58,33 @@ def main(path: str) -> int:
             added_tables.append(table.name)
             continue
 
-        have = {
-            row[1] for row in conn.execute(f"PRAGMA table_info({table.name})")
-        }
+        info = {row[1]: row for row in conn.execute(
+            f"PRAGMA table_info({table.name})")}
+        have = set(info)
+        # A column whose nullability changed cannot be altered in SQLite — the
+        # table has to be rebuilt, which is what alembic's batch mode does.
+        # Reported rather than attempted, because rebuilding a table with data
+        # in it is a migration, not a chore.
+        for column in table.columns:
+            row = info.get(column.name)
+            if row is None:
+                continue
+            # SQLite does not set the notnull flag on a PRIMARY KEY column
+            # even though it behaves as one, so a PK always looks nullable
+            # here. Skip them rather than report a drift that is not real.
+            if row[5]:
+                continue
+            was_required = bool(row[3])
+            if was_required and column.nullable:
+                drifted.append(
+                    f"{table.name}.{column.name} is NOT NULL here but "
+                    f"nullable in the models"
+                )
+            elif not was_required and not column.nullable:
+                drifted.append(
+                    f"{table.name}.{column.name} is nullable here but "
+                    f"required by the models"
+                )
         for column in table.columns:
             if column.name in have:
                 continue
@@ -96,9 +121,15 @@ def main(path: str) -> int:
         print(f"+ column {name}")
     for name in refused:
         print(f"! {name} is NOT NULL with no default — rebuild the database")
-    if not (added_tables or added_columns or refused):
+    for note in drifted:
+        print(f"! {note}")
+    if drifted:
+        print("  SQLite cannot alter a column: stamp this database at the "
+              "revision before the change and run `alembic upgrade head`, "
+              "which rebuilds the table in batch mode.")
+    if not (added_tables or added_columns or refused or drifted):
         print(f"{path} already matches the models")
-    return 1 if refused else 0
+    return 1 if (refused or drifted) else 0
 
 
 if __name__ == "__main__":

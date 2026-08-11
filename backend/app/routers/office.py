@@ -87,6 +87,7 @@ from ..schemas import (
     OfficeSaleOut,
     OfficeTableCreate,
     OfficeTableOut,
+    OfficeTablePlace,
     OfficeTableUpdate,
 )
 
@@ -1646,6 +1647,10 @@ async def list_office_tables(
     include_inactive: bool = Query(
         False, description="the imported floor carries tables nobody uses"
     ),
+    placed: bool | None = Query(
+        None,
+        description="true: only tables on a plan. false: only those off it.",
+    ),
     ctx: OfficeContext = OfficeDep,
 ) -> list[OfficeTableOut]:
     async with tenant_session(ctx.tenant_id) as session:
@@ -1655,6 +1660,10 @@ async def list_office_tables(
         )
         if section_id is not None:
             stmt = stmt.where(DiningTable.section_id == section_id)
+        if placed is True:
+            stmt = stmt.where(DiningTable.section_id.is_not(None))
+        elif placed is False:
+            stmt = stmt.where(DiningTable.section_id.is_(None))
         if not include_inactive:
             stmt = stmt.where(DiningTable.is_active.is_(True))
         rows = list(
@@ -1663,10 +1672,22 @@ async def list_office_tables(
             .all()
         )
         busy = await _tables_in_use(session, ctx.tenant_id)
+        areas = dict(
+            (
+                await session.execute(
+                    select(FloorSection.id, FloorSection.name).where(
+                        FloorSection.tenant_id == ctx.tenant_id
+                    )
+                )
+            ).all()
+        )
 
     return [
         OfficeTableOut.model_validate(t).model_copy(
-            update={"in_use": t.id in busy}
+            update={
+                "in_use": t.id in busy,
+                "section_name": areas.get(t.section_id),
+            }
         )
         for t in rows
     ]
@@ -1678,22 +1699,36 @@ async def create_table(
     ctx: OfficeContext = OfficeDep,
 ) -> OfficeTableOut:
     async with tenant_session(ctx.tenant_id) as session:
-        area = (
-            await session.execute(
-                select(FloorSection).where(
-                    FloorSection.id == body.section_id,
-                    FloorSection.tenant_id == ctx.tenant_id,
+        # An area is optional: a table can be set up before anyone decides
+        # where it goes. Without one it still needs a branch, and the branch
+        # is the office session's.
+        area = None
+        if body.section_id is not None:
+            area = (
+                await session.execute(
+                    select(FloorSection).where(
+                        FloorSection.id == body.section_id,
+                        FloorSection.tenant_id == ctx.tenant_id,
+                    )
                 )
+            ).scalar_one_or_none()
+            if area is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "no such area")
+        branch_id = area.branch_id if area else (
+            await session.execute(
+                select(Branch.id).where(Branch.tenant_id == ctx.tenant_id)
             )
-        ).scalar_one_or_none()
-        if area is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such area")
+        ).scalars().first()
+        if branch_id is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "this tenant has no branch yet"
+            )
 
         clash = (
             await session.execute(
                 select(DiningTable).where(
                     DiningTable.tenant_id == ctx.tenant_id,
-                    DiningTable.branch_id == area.branch_id,
+                    DiningTable.branch_id == branch_id,
                     DiningTable.table_no == body.table_no,
                     DiningTable.is_deleted.is_(False),
                 )
@@ -1709,13 +1744,15 @@ async def create_table(
 
         table = DiningTable(
             tenant_id=ctx.tenant_id,
-            branch_id=area.branch_id,
+            branch_id=branch_id,
             server_version=await _next_catalog_version(session, ctx.tenant_id),
             **body.model_dump(),
         )
         session.add(table)
         await session.flush()
-        out = OfficeTableOut.model_validate(table)
+        out = OfficeTableOut.model_validate(table).model_copy(
+            update={"section_name": area.name if area else None}
+        )
 
     return out
 
@@ -1770,6 +1807,127 @@ async def update_table(
         await session.flush()
         out = OfficeTableOut.model_validate(table).model_copy(
             update={"in_use": table.id in busy}
+        )
+
+    return out
+
+
+@router.post("/tables/{table_id}/place", response_model=OfficeTableOut)
+async def place_table(
+    table_id: uuid.UUID,
+    body: OfficeTablePlace,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeTableOut:
+    """Call a table that already exists onto a square of a plan.
+
+    The floor plan arranges tables; it does not invent them. Placing is
+    therefore its own act rather than an edit that happens to set three
+    fields, and it can say the two things that make a plan trustworthy: the
+    square is free, and the table is not one somebody is sitting at.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        table = (
+            await session.execute(
+                select(DiningTable).where(
+                    DiningTable.id == table_id,
+                    DiningTable.tenant_id == ctx.tenant_id,
+                    DiningTable.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if table is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such table")
+
+        area = (
+            await session.execute(
+                select(FloorSection).where(
+                    FloorSection.id == body.section_id,
+                    FloorSection.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if area is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such area")
+        if not area.is_active:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"{area.name} is closed; open it before putting tables in it",
+            )
+
+        busy = await _tables_in_use(session, ctx.tenant_id)
+        if table.id in busy:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"table {table.table_no} is in use; settle it first",
+            )
+
+        occupant = (
+            await session.execute(
+                select(DiningTable).where(
+                    DiningTable.tenant_id == ctx.tenant_id,
+                    DiningTable.section_id == body.section_id,
+                    DiningTable.pos_x == body.pos_x,
+                    DiningTable.pos_y == body.pos_y,
+                    DiningTable.id != table.id,
+                    DiningTable.is_deleted.is_(False),
+                )
+            )
+        ).scalars().first()
+        if occupant is not None:
+            # One table per square. Two on the same one means a waiter can
+            # only ever tap the top one.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"table {occupant.table_no} is already on that square",
+            )
+
+        table.section_id = body.section_id
+        table.pos_x, table.pos_y = body.pos_x, body.pos_y
+        table.server_version = await _next_catalog_version(session, ctx.tenant_id)
+        await session.flush()
+        out = OfficeTableOut.model_validate(table).model_copy(
+            update={"in_use": False, "section_name": area.name}
+        )
+
+    return out
+
+
+@router.delete("/tables/{table_id}/place", response_model=OfficeTableOut)
+async def unplace_table(
+    table_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeTableOut:
+    """Take a table off the plan without retiring it.
+
+    Distinct from taking it out of service: the table still exists, still has
+    its number and its seats, and can be called onto another room tomorrow. A
+    restaurant that rearranges a room has not thrown its furniture away.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        table = (
+            await session.execute(
+                select(DiningTable).where(
+                    DiningTable.id == table_id,
+                    DiningTable.tenant_id == ctx.tenant_id,
+                    DiningTable.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if table is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such table")
+
+        busy = await _tables_in_use(session, ctx.tenant_id)
+        if table.id in busy:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"table {table.table_no} is in use; settle it first",
+            )
+
+        table.section_id = None
+        table.server_version = await _next_catalog_version(session, ctx.tenant_id)
+        await session.flush()
+        out = OfficeTableOut.model_validate(table).model_copy(
+            update={"in_use": False, "section_name": None}
         )
 
     return out

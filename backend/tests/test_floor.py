@@ -1153,3 +1153,195 @@ async def test_tidying_another_tenants_area_is_refused(client, floor, seeded):
         headers={"Authorization": "Bearer " + seeded["b"]["office_token"]},
     )
     assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# The tables master
+#
+# What a table IS and where it sits are two different facts. Its number, what
+# staff call it and how many it seats belong to the restaurant; where it sits
+# belongs to a room, and a restaurant rearranges rooms without inventing new
+# tables. Same split the menu already has: products are a master, and the
+# layout places them.
+# --------------------------------------------------------------------------
+
+
+def _office(seeded, who="a"):
+    return {"Authorization": "Bearer " + seeded[who]["office_token"]}
+
+
+async def test_a_table_can_be_set_up_before_anyone_places_it(client, floor, seeded):
+    headers = _office(seeded)
+    r = await client.post(
+        "/v1/office/tables",
+        json={"table_no": 77, "seats": 4, "label": "By the window"},
+        headers=headers,
+    )
+    assert r.status_code == 201, r.text
+    made = r.json()
+    assert made["section_id"] is None
+    assert made["section_name"] is None
+    assert made["is_active"] is True
+
+    off = await client.get("/v1/office/tables?placed=false", headers=headers)
+    assert 77 in [t["table_no"] for t in off.json()]
+    on = await client.get("/v1/office/tables?placed=true", headers=headers)
+    assert 77 not in [t["table_no"] for t in on.json()]
+
+
+async def test_an_unplaced_table_is_not_on_any_till_floor(client, floor, seeded):
+    """It is on the books, not in the room. Sending it would drop it into
+    whichever area sorted first."""
+    await client.post(
+        "/v1/office/tables",
+        json={"table_no": 78, "seats": 2},
+        headers=_office(seeded),
+    )
+    r = await client.get("/v1/floor", headers=floor["headers"])
+    assert r.status_code == 200, r.text
+    assert 78 not in [t["table_no"] for t in r.json()["tables"]]
+
+
+async def test_calling_a_table_onto_a_square_puts_it_on_the_floor(
+    client, floor, seeded
+):
+    headers = _office(seeded)
+    made = (await client.post(
+        "/v1/office/tables", json={"table_no": 79, "seats": 6},
+        headers=headers,
+    )).json()
+
+    r = await client.post(
+        f"/v1/office/tables/{made['id']}/place",
+        json={"section_id": str(floor["section_id"]), "pos_x": 3, "pos_y": 2},
+        headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    placed = r.json()
+    assert (placed["pos_x"], placed["pos_y"]) == (3, 2)
+    assert placed["section_id"] == str(floor["section_id"])
+    assert placed["section_name"]
+
+    on_till = (await client.get("/v1/floor", headers=floor["headers"])).json()
+    seen = [t for t in on_till["tables"] if t["table_no"] == 79]
+    assert seen and (seen[0]["pos_x"], seen[0]["pos_y"]) == (3, 2)
+
+
+async def test_two_tables_cannot_share_a_square(client, floor, seeded):
+    """A waiter can only ever tap the top one."""
+    headers = _office(seeded)
+    made = (await client.post(
+        "/v1/office/tables", json={"table_no": 80, "seats": 2},
+        headers=headers,
+    )).json()
+    occupied = (await client.get(
+        f"/v1/office/tables?section_id={floor['section_id']}", headers=headers
+    )).json()[0]
+
+    r = await client.post(
+        f"/v1/office/tables/{made['id']}/place",
+        json={"section_id": str(floor["section_id"]),
+              "pos_x": occupied["pos_x"], "pos_y": occupied["pos_y"]},
+        headers=headers,
+    )
+    assert r.status_code == 409
+    assert "already on that square" in r.text
+
+
+async def test_a_table_cannot_be_placed_into_a_closed_area(client, floor, seeded):
+    headers = _office(seeded)
+    made = (await client.post(
+        "/v1/office/tables", json={"table_no": 81, "seats": 2},
+        headers=headers,
+    )).json()
+    # Empty the area first, or closing it is refused for its own good reason.
+    async with SessionLocal() as s:
+        for row in (
+            await s.execute(
+                select(m.DiningTable).where(
+                    m.DiningTable.section_id == floor["section_id"]
+                )
+            )
+        ).scalars().all():
+            row.section_id = None
+        await s.commit()
+    await client.patch(
+        f"/v1/office/floor-sections/{floor['section_id']}",
+        json={"is_active": False}, headers=headers,
+    )
+
+    r = await client.post(
+        f"/v1/office/tables/{made['id']}/place",
+        json={"section_id": str(floor["section_id"]), "pos_x": 0, "pos_y": 0},
+        headers=headers,
+    )
+    assert r.status_code == 409
+    assert "closed" in r.text
+
+
+async def test_taking_a_table_off_a_plan_does_not_retire_it(client, floor, seeded):
+    """A restaurant that rearranges a room has not thrown its furniture away."""
+    headers = _office(seeded)
+    placed = (await client.get(
+        f"/v1/office/tables?section_id={floor['section_id']}", headers=headers
+    )).json()[0]
+
+    r = await client.delete(
+        f"/v1/office/tables/{placed['id']}/place", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["section_id"] is None
+    assert r.json()["is_active"] is True, "still on the books"
+
+    gone = (await client.get("/v1/floor", headers=floor["headers"])).json()
+    assert placed["table_no"] not in [t["table_no"] for t in gone["tables"]]
+
+
+async def test_a_table_in_use_cannot_be_moved_or_taken_off_the_plan(
+    client, floor, seeded
+):
+    headers = _office(seeded)
+    tid = str(floor["table_ids"][0])
+    await client.post(
+        f"/v1/tables/{tid}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+
+    r = await client.delete(f"/v1/office/tables/{tid}/place", headers=headers)
+    assert r.status_code == 409
+    assert "settle it first" in r.text
+
+    r = await client.post(
+        f"/v1/office/tables/{tid}/place",
+        json={"section_id": str(floor["section_id"]), "pos_x": 9, "pos_y": 9},
+        headers=headers,
+    )
+    assert r.status_code == 409
+
+
+async def test_a_table_number_is_still_unique_without_an_area(client, floor, seeded):
+    headers = _office(seeded)
+    first = await client.post(
+        "/v1/office/tables", json={"table_no": 82, "seats": 2}, headers=headers)
+    assert first.status_code == 201, first.text
+    again = await client.post(
+        "/v1/office/tables", json={"table_no": 82, "seats": 2}, headers=headers)
+    assert again.status_code == 409
+    assert "already exists" in again.text
+
+
+async def test_taking_a_table_out_of_service_leaves_it_on_the_plan(
+    client, floor, seeded
+):
+    """Out of service is about the table, not about where it sits — a manager
+    putting it back should not have to find its square again."""
+    headers = _office(seeded)
+    placed = (await client.get(
+        f"/v1/office/tables?section_id={floor['section_id']}", headers=headers
+    )).json()[0]
+
+    r = await client.patch(
+        f"/v1/office/tables/{placed['id']}",
+        json={"is_active": False}, headers=headers,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["is_active"] is False
+    assert r.json()["section_id"] == placed["section_id"]

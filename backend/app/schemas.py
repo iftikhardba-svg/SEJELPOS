@@ -991,7 +991,11 @@ class OfficeFloorSectionUpdate(BaseModel):
 class OfficeTableOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: uuid.UUID
-    section_id: uuid.UUID
+    # Null means the table exists but is not on any plan.
+    section_id: uuid.UUID | None = None
+    # Denormalised so the master list can say where a table is without a
+    # request per row.
+    section_name: str | None = None
     table_no: int
     label: str | None = None
     seats: int
@@ -1010,7 +1014,8 @@ class OfficeTableOut(BaseModel):
 
 
 class OfficeTableCreate(BaseModel):
-    section_id: uuid.UUID
+    # Optional: a table can be set up before anyone decides where it goes.
+    section_id: uuid.UUID | None = None
     table_no: int = Field(ge=1)
     label: str | None = Field(default=None, max_length=32)
     seats: int = Field(default=2, ge=1, le=99)
@@ -1035,6 +1040,14 @@ class OfficeTableUpdate(BaseModel):
     shape: str | None = Field(default=None, pattern="^(square|round|rect)$")
     can_reserve: bool | None = None
     is_active: bool | None = None
+
+
+class OfficeTablePlace(BaseModel):
+    """Call an existing table onto a square of a plan."""
+
+    section_id: uuid.UUID
+    pos_x: int = Field(ge=0)
+    pos_y: int = Field(ge=0)
 
 
 class OfficeDeviceOut(BaseModel):
