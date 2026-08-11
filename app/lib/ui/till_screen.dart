@@ -17,7 +17,9 @@ import '../data/pos_database.dart';
 import '../printing/escpos.dart';
 import '../printing/printer.dart';
 import '../sync/order_numbers.dart';
+import '../sync/sync_api.dart';
 import '../sync/sync_worker.dart';
+import 'floor_screen.dart';
 import 'setup_screen.dart';
 
 class TillScreen extends StatefulWidget {
@@ -27,9 +29,15 @@ class TillScreen extends StatefulWidget {
     this.worker,
     this.sendBytes,
     this.orderNumbers,
+    this.api,
   });
 
   final PosDatabase db;
+
+  /// Reaches the floor: tables are live shared state, not catalog. Null on the
+  /// demo path, where the till has no backend — table service is then
+  /// unavailable rather than faked with a floor nobody else can see.
+  final SyncApi? api;
 
   /// Allocates the customer-facing order number. Null on the demo path,
   /// where the till shows no number rather than inventing one that a second
@@ -55,8 +63,20 @@ class _TillScreenState extends State<TillScreen> {
   late int _activeMenu;
   List<CatalogProduct> _items = const [];
 
-  final List<CartLine> _cart = [];
+  List<CartLine> _cart = [];
   final _refController = TextEditingController();
+
+  /// The table this order is for, or null on counter trade.
+  SeatedTable? _table;
+
+  /// Each open table keeps its own order while the waiter walks the floor.
+  /// Parked here rather than on the server: the structure of a configured item
+  /// — what was chosen inside a meal — has nowhere to live in a session line,
+  /// and losing it would cost the kitchen the answers.
+  final Map<String, List<CartLine>> _tableCarts = {};
+
+  /// Tables this device has seated and not yet settled.
+  final Map<String, SeatedTable> _myTables = {};
 
   /// The number waiting to be called out for the sale being rung. Reserved
   /// from the backend in blocks — never counted locally, or two tills at one
@@ -98,6 +118,37 @@ class _TillScreenState extends State<TillScreen> {
 
   void _backToMenu() {
     setState(() => _openPage = null);
+  }
+
+  // ------------------------------------------------------------- the floor
+
+  /// True while this order is waiting for a table to be chosen.
+  ///
+  /// Dine-In carries `needs_table` in the imported catalog, so a dine-in order
+  /// starts on the floor and the menu only opens once somebody is sitting
+  /// down. Counter trade — which is 88% of this customer's bills — is
+  /// untouched by any of it.
+  bool get _needsATable =>
+      _salesType.needsTable && _table == null && widget.api != null;
+
+  void _seat(SeatedTable table) {
+    setState(() {
+      _table = table;
+      _myTables[table.id] = table;
+      // Walking back onto a table picks its order back up where it was left.
+      _cart = _tableCarts.putIfAbsent(table.id, () => <CartLine>[]);
+      _openPage = _tiles.isEmpty ? _activeMenu : null;
+    });
+  }
+
+  /// Park this table's order and go back to the room.
+  void _backToFloor() {
+    final table = _table;
+    if (table != null) _tableCarts[table.id] = _cart;
+    setState(() {
+      _table = null;
+      _cart = [];
+    });
   }
 
   /// '#RRGGBB' from the catalog, or null to leave the theme alone.
@@ -152,8 +203,11 @@ class _TillScreenState extends State<TillScreen> {
   /// here rather than assumed to be zero: completeSale prices them, and a
   /// till that showed a total the receipt then disagreed with would be
   /// charging one number and printing another.
-  int get _grossTotal =>
-      _cart.fold(0, (sum, l) =>
+  int get _grossTotal => _cartTotal(_cart);
+
+  int _cartTotal(List<CartLine> cart) => cart.fold(
+      0,
+      (sum, l) =>
           sum +
           lineTotal(_unitPrice(l.product) ?? 0, l.qty) +
           _extrasTotal(l.extras, l.qty));
@@ -316,6 +370,8 @@ class _TillScreenState extends State<TillScreen> {
             ? _refController.text.trim()
             : null,
         orderNo: _pending?.number,
+        tableNo: _table?.tableNo,
+        guests: _table?.guests,
       );
     } on Exception catch (e) {
       _toast('$e');
@@ -323,10 +379,21 @@ class _TillScreenState extends State<TillScreen> {
     }
 
     final completedOrder = _orderLabel;
+    final settled = _table;
     setState(() {
       _cart.clear();
       _refController.clear();
+      if (settled != null) {
+        // The bill is paid, so the table is free. Its parked order goes with
+        // it — leaving one behind would put the next party's first round on
+        // the last party's bill.
+        _tableCarts.remove(settled.id);
+        _myTables.remove(settled.id);
+        _table = null;
+        _cart = [];
+      }
     });
+    if (settled != null) unawaited(_releaseTable(settled, sale.saleUuid));
     // The next customer's number is reserved now, so it is on screen before
     // they have finished ordering.
     unawaited(_takeOrderNumber());
@@ -381,6 +448,23 @@ class _TillScreenState extends State<TillScreen> {
         ],
       ),
     );
+  }
+
+  /// Tell the floor the table has been settled, and by which bill.
+  ///
+  /// Off the critical path on purpose: the sale is already recorded, signed
+  /// and in the outbox. A floor service that cannot be reached must not stop
+  /// the customer leaving — the table shows as occupied until the next reload
+  /// says otherwise, which is a nuisance, while a blocked charge is a queue.
+  Future<void> _releaseTable(SeatedTable table, String saleUuid) async {
+    try {
+      await widget.api?.closeSession(table.sessionId, saleUuid: saleUuid);
+    } on Exception {
+      if (mounted) {
+        _toast('Table ${table.tableNo} could not be closed on the server — '
+            'the sale is recorded; reload the floor');
+      }
+    }
   }
 
   Future<void> _printReceipt(CompletedSale sale, String orderLabel) async {
@@ -496,10 +580,24 @@ class _TillScreenState extends State<TillScreen> {
     final scheme = Theme.of(context).colorScheme;
     final split = splitInclusive(_grossTotal);
 
+    final table = _table;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('POS — Arid Branch'),
         actions: [
+          // Which table this order is for, and the way back to the room. The
+          // order is parked on the table rather than lost, so a waiter can
+          // take a second table and come back.
+          if (table != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ActionChip(
+                avatar: const Icon(Icons.table_restaurant_outlined, size: 18),
+                label: Text('${table.name} · ${table.guests} guests'),
+                onPressed: _backToFloor,
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Center(
@@ -534,13 +632,26 @@ class _TillScreenState extends State<TillScreen> {
           _saleTypeStrip(scheme),
           if (_salesType.requiresExternalRef) _refBar(scheme),
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(flex: 3, child: _menuPanel(scheme)),
-                SizedBox(width: 320, child: _cartPanel(scheme, split)),
-              ],
-            ),
+            // A dine-in order starts in the room. The menu is not reachable
+            // until somebody is sitting down, because a dine-in bill with no
+            // table is one nobody can deliver food to or find again.
+            child: _needsATable
+                ? FloorScreen(
+                    api: widget.api!,
+                    onSeated: _seat,
+                    ours: _myTables,
+                    cartTotals: {
+                      for (final entry in _tableCarts.entries)
+                        entry.key: _cartTotal(entry.value),
+                    },
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(flex: 3, child: _menuPanel(scheme)),
+                      SizedBox(width: 320, child: _cartPanel(scheme, split)),
+                    ],
+                  ),
           ),
         ],
       ),

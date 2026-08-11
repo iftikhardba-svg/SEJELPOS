@@ -398,6 +398,68 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
                     "server_version": lambda r: version,
                 })
 
+            # The floor. Transformed since the first pass and never loaded, so
+            # every migrated customer had table service switched on (Dine-In
+            # carries needs_table) and no tables to seat anyone at.
+            counts["floor_sections"] = await upsert(
+                m.FloorSection, data.get("floor_sections", []), ["code"], {
+                    "branch_id": lambda r: bid,
+                    "code": lambda r: r["code"],
+                    "name": lambda r: r["name"],
+                    "name_ar": lambda r: r.get("name_ar"),
+                    "sort_order": lambda r: _int(r.get("sort_order")),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
+            # Tables reference their section by the id the transform invented,
+            # which is not the id this database gave the row. Map through the
+            # code, which is what actually identifies a section.
+            section_by_source = {
+                s["id"]: s["code"] for s in data.get("floor_sections", [])
+            }
+            section_ids = {
+                code: sid
+                for code, sid in (
+                    await s.execute(
+                        select(m.FloorSection.code, m.FloorSection.id).where(
+                            m.FloorSection.tenant_id == tid,
+                            m.FloorSection.branch_id == bid,
+                        )
+                    )
+                ).all()
+            }
+            seatable = [
+                t for t in data.get("dining_tables", [])
+                if section_by_source.get(t.get("section_id")) in section_ids
+            ]
+            # A table whose section did not load is skipped rather than put in
+            # an invented area: a floor plan that quietly moves tables is worse
+            # than one missing a few.
+            homeless = len(data.get("dining_tables", [])) - len(seatable)
+
+            counts["dining_tables"] = await upsert(
+                m.DiningTable, seatable, ["table_no"], {
+                    "branch_id": lambda r: bid,
+                    "section_id": lambda r: section_ids[
+                        section_by_source[r["section_id"]]],
+                    "table_no": lambda r: _int(r["table_no"]),
+                    "label": lambda r: r.get("label"),
+                    "seats": lambda r: _int(r.get("seats"), 2),
+                    "min_seats": lambda r: r.get("min_seats"),
+                    "max_seats": lambda r: r.get("max_seats"),
+                    "pos_x": lambda r: _int(r.get("pos_x")),
+                    "pos_y": lambda r: _int(r.get("pos_y")),
+                    "width": lambda r: _int(r.get("width"), 2),
+                    "height": lambda r: _int(r.get("height"), 2),
+                    "shape": lambda r: r.get("shape") or "square",
+                    "can_reserve": lambda r: _bool(r.get("can_reserve"), True),
+                    "is_active": lambda r: _bool(r.get("is_active"), True),
+                    "is_deleted": lambda r: _bool(r.get("is_deleted")),
+                    "server_version": lambda r: version,
+                })
+
             counts["tax_rates"] = await upsert(
                 m.TaxRate, data["tax_rates"], ["tax_id"], {
                     "company_id": lambda r: cid,
@@ -417,6 +479,7 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
         "server_version": version,
         "loaded": counts,
         "orphan_buttons_skipped": orphans,
+        "tables_without_a_section_skipped": homeless,
     }
 
 

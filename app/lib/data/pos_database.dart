@@ -87,6 +87,7 @@ class SalesType {
     required this.priceTier,
     required this.isAggregator,
     required this.requiresExternalRef,
+    this.needsTable = false,
     this.defaultMethodnum,
   });
 
@@ -95,6 +96,10 @@ class SalesType {
   final String priceTier;
   final bool isAggregator;
   final bool requiresExternalRef;
+
+  /// Table service. Dine-In carries this in the imported catalog, and it is
+  /// what makes the till start on the floor instead of the menu.
+  final bool needsTable;
 
   /// The method this trade is normally settled with, when the catalog says.
   /// Null throughout this customer's data, so the till falls back to its own
@@ -402,7 +407,7 @@ class PosDatabase {
   List<SalesType> salesTypes() {
     final rows = _db.select(
       'SELECT sale_type_no, descript, price_tier, is_aggregator, '
-      '       requires_external_ref, default_methodnum '
+      '       requires_external_ref, needs_table, default_methodnum '
       'FROM sales_type WHERE is_active = 1 AND is_deleted = 0 '
       'ORDER BY sort_order, sale_type_no',
     );
@@ -414,6 +419,7 @@ class PosDatabase {
           priceTier: r['price_tier'] as String,
           isAggregator: (r['is_aggregator'] as int) != 0,
           requiresExternalRef: (r['requires_external_ref'] as int) != 0,
+          needsTable: (r['needs_table'] as int? ?? 0) != 0,
           defaultMethodnum: r['default_methodnum'] as int?,
         ),
     ];
@@ -727,6 +733,8 @@ class PosDatabase {
     String? externalRef,
     int? orderNo,
     int empnum = 0,
+    int? tableNo,
+    int? guests,
   }) {
     if (cart.isEmpty) {
       throw StateError('an empty cart cannot be charged');
@@ -848,11 +856,16 @@ class PosDatabase {
       _db.execute(
         'INSERT INTO sale (sale_uuid, receipt_no, opened_at, closed_at, '
         '  business_date, station_no, store_no, emp_open, sale_type, '
-        '  order_no, external_ref, net_total, tax_total, final_total, status) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        '  table_no, num_guests, order_no, external_ref, net_total, '
+        '  tax_total, final_total, status) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [
           saleUuid, receiptNo, nowIso, nowIso, today,
           device['station_no'], device['store_no'], empnum, salesType.no,
+          // Which table this was, and how many sat at it. Covers are what
+          // every restaurant report divides by; a dine-in bill without them
+          // can be counted but not understood.
+          tableNo, guests ?? 1,
           orderNo, externalRef, netTotal, taxTotal, grossTotal, 'closed',
         ],
       );

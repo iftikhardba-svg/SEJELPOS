@@ -201,6 +201,50 @@ class SyncApi {
     _decode(r);
   }
 
+  // ----------------------------------------------------------------- floor
+
+  /// The whole floor with live status: sections, tables, who is sitting where.
+  ///
+  /// Server state, not catalog — a second waiter has to see that table 12 was
+  /// seated a minute ago on someone else's tablet, so this is fetched when the
+  /// floor is opened rather than cached with the menu.
+  Future<Map<String, dynamic>> getFloor() async {
+    final r = await _client.get(_u('/floor'), headers: _headers());
+    return _decode(r);
+  }
+
+  /// Seat a table. The backend refuses a table that is already open, and says
+  /// which session has it.
+  Future<Map<String, dynamic>> openTable(String tableId,
+      {required int guests}) async {
+    final r = await _client.post(
+      _u('/tables/$tableId/open'),
+      headers: _headers(),
+      body: jsonEncode({'guests': guests}),
+    );
+    return _decode(r);
+  }
+
+  Future<Map<String, dynamic>> tableSession(String tableId) async {
+    final r = await _client.get(
+      _u('/tables/$tableId/session'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
+  /// Free the table. [saleUuid] ties the session to the bill that settled it,
+  /// which is what lets the floor be reconciled against the day's takings.
+  Future<Map<String, dynamic>> closeSession(String sessionId,
+      {String? saleUuid}) async {
+    final query = saleUuid == null ? '' : '?sale_uuid=$saleUuid';
+    final r = await _client.post(
+      _u('/sessions/$sessionId/close$query'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
   /// Reserve a contiguous run of customer-facing order numbers.
   ///
   /// The device owns `first .. first + count - 1` and hands them out locally,

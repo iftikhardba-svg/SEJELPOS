@@ -123,6 +123,12 @@ class _PosAppState extends State<PosApp> {
         db: widget.db,
         worker: _worker,
         orderNumbers: _orderNumbers,
+        // Null on the demo path: the floor is shared state and a demo till has
+        // nothing to share it with, so table service stays out of reach rather
+        // than pretending.
+        api: token != null && baseUrl != null
+            ? SyncApi(baseUrl: baseUrl, token: token)
+            : null,
       );
     }
 
