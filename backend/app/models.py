@@ -28,6 +28,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -268,6 +269,48 @@ class Product(Base):
     fore_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     back_color: Mapped[str | None] = mapped_column(String(7), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=TRUE)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
+    server_version: Mapped[int] = mapped_column(BigInteger, index=True)
+
+
+class ProductImage(Base):
+    """The picture on a product's till button.
+
+    A table of its own, not a column on Product, for one reason: an image is
+    roughly a thousand times the size of the row that names it. On Product it
+    would ride along with every price edit, every colour change and every
+    catalog delta that touches the item — and a device would re-download the
+    picture to learn that the price went up by a riyal.
+
+    The bytes are stored here rather than as a file on disk or a URL because
+    the tills are offline-first. A URL is a promise that the network is up at
+    the moment a cashier opens the menu, which is exactly the moment this
+    product exists to survive. They arrive with the catalog and stay on the
+    device.
+
+    The back office resizes and crops before upload, so what lands here is
+    already the size a tile draws: the server stores what it is given and
+    records the shape so both ends can say what they have.
+    """
+
+    __tablename__ = "product_image"
+    __table_args__ = (
+        # One image per product. Replacing it is an update, so a device sees a
+        # single row change version rather than an old row and a new one.
+        UniqueConstraint("tenant_id", "prodnum"),
+        Index("ix_product_image_sync", "tenant_id", "server_version"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    prodnum: Mapped[int] = mapped_column(Integer, index=True)
+    # 'image/jpeg' or 'image/png' — what the bytes actually are, so a device
+    # never has to sniff them.
+    mime: Mapped[str] = mapped_column(String(32))
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    width: Mapped[int] = mapped_column(Integer)
+    height: Mapped[int] = mapped_column(Integer)
+    byte_size: Mapped[int] = mapped_column(Integer)
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=FALSE)
     server_version: Mapped[int] = mapped_column(BigInteger, index=True)
 

@@ -448,6 +448,33 @@ class SyncService {
         );
       }
 
+      // Button pictures. A tombstone carries no bytes — it exists to tell the
+      // device the picture went — so the row is removed rather than stored
+      // empty: on a tablet the only reason to keep one is to know it is gone,
+      // and absence says that already.
+      for (final im in _list(body['product_images'])) {
+        if (_b(im['is_deleted']) == 1) {
+          raw.execute('DELETE FROM product_image WHERE prodnum = ?',
+              [im['prodnum']]);
+          continue;
+        }
+        final encoded = im['data_b64'] as String?;
+        if (encoded == null) continue; // nothing to draw; keep what we have
+        raw.execute(
+          'INSERT INTO product_image (prodnum, mime, data, width, height, '
+          '  byte_size, server_version, is_deleted) VALUES (?,?,?,?,?,?,?,0) '
+          'ON CONFLICT(prodnum) DO UPDATE SET '
+          '  mime=excluded.mime, data=excluded.data, width=excluded.width, '
+          '  height=excluded.height, byte_size=excluded.byte_size, '
+          '  server_version=excluded.server_version, is_deleted=0',
+          [
+            im['prodnum'], im['mime'], base64Decode(encoded),
+            im['width'] ?? 0, im['height'] ?? 0, im['byte_size'] ?? 0,
+            im['server_version'],
+          ],
+        );
+      }
+
       if (advanceWatermark) {
         raw.execute(
           "INSERT INTO sync_state (table_name, last_version, last_pulled_at) "

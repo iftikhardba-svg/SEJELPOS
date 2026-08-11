@@ -1139,6 +1139,16 @@ class _TillScreenState extends State<TillScreen> {
         final shape = RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
         );
+
+        // A picture is read faster than a name, which is why anyone puts one
+        // on a button — but a cashier still has to be able to check what they
+        // pressed and what it costs, so all three share the tile rather than
+        // the picture replacing the words.
+        final picture = _tileImage(p);
+        if (picture != null) {
+          return _imageTile(p, picture, unit, shape, scheme);
+        }
+
         final label = Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1183,6 +1193,92 @@ class _TillScreenState extends State<TillScreen> {
           child: label,
         );
       },
+    );
+  }
+
+  /// Decoded pictures, kept so scrolling a page does not decode a JPEG per
+  /// frame. Keyed by version as well as product: a replaced picture is a
+  /// different entry, so a till never draws the old one after a sync.
+  final Map<String, MemoryImage> _images = {};
+
+  MemoryImage? _tileImage(CatalogProduct p) {
+    final bytes = p.image;
+    if (bytes == null) return null;
+    return _images.putIfAbsent(
+        '${p.prodnum}:${p.imageVersion}', () => MemoryImage(bytes));
+  }
+
+  /// A tile carrying a picture: the image fills it, and the name and price sit
+  /// on top under a gradient dark enough to read them over a photograph of
+  /// anything. The colours from the catalog stay as the tile's own background,
+  /// so a picture that does not cover the square still looks deliberate.
+  Widget _imageTile(
+    CatalogProduct p,
+    MemoryImage picture,
+    int? unit,
+    OutlinedBorder shape,
+    ColorScheme scheme,
+  ) {
+    const shadow = [Shadow(blurRadius: 4, color: Colors.black87)];
+    return FilledButton(
+      onPressed: unit == null ? null : () => unawaited(_add(p)),
+      style: FilledButton.styleFrom(
+        backgroundColor: _colour(p.backColor) ?? scheme.surfaceContainerHighest,
+        padding: EdgeInsets.zero,
+        shape: shape,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image(image: picture, fit: BoxFit.cover),
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Color(0x66000000),
+                    Color(0x1A000000),
+                    Color(0xCC000000),
+                  ],
+                  stops: [0, 0.45, 1],
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      p.label,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        shadows: shadow,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    unit == null ? 'no price' : formatHalalas(unit),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                      shadows: shadow,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

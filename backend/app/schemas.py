@@ -195,6 +195,24 @@ class ComboItemOut(CatalogItem):
     is_active: bool
 
 
+class ProductImageOut(CatalogItem):
+    """A till button's picture, base64 in the catalog delta.
+
+    Base64 rather than a URL: the tills are offline-first, and a URL is a
+    promise that the network is up at the moment a cashier opens the menu.
+    It costs a third more bytes on the wire, once, and nothing afterwards.
+    """
+
+    prodnum: int
+    mime: str
+    width: int
+    height: int
+    byte_size: int
+    # Absent on a tombstone — a deleted image has no bytes to send, and a
+    # device that receives one drops the picture it holds.
+    data_b64: str | None = None
+
+
 class CatalogResponse(BaseModel):
     version: int = Field(description="Watermark to send as ?since= next time")
     has_more: bool = False
@@ -220,6 +238,7 @@ class CatalogResponse(BaseModel):
     question_choices: list[QuestionChoiceOut] = []
     product_questions: list[ProductQuestionOut] = []
     combo_items: list[ComboItemOut] = []
+    product_images: list[ProductImageOut] = []
 
 
 # --------------------------------------------------------------------------
@@ -715,6 +734,11 @@ class OfficeProductOut(BaseModel):
     button_text: str | None = None
     fore_color: str | None = None
     back_color: str | None = None
+    # A picture is read faster than a name, which is the point of one. Only
+    # whether it is set and which version it is at - the bytes come from
+    # /products/{prodnum}/image so a list stays a list.
+    has_image: bool = False
+    image_version: int = 0
     server_version: int
     # Which menu screens this product sits on. Read-only here - moving
     # buttons around is a menu-layout job, not a product one.
@@ -892,6 +916,37 @@ class OfficeMenuButtonOut(BaseModel):
     back_color: str | None = None
     price_a: int
     is_active: bool
+    # Whether a picture is set, not the picture itself: a 30-cell page would
+    # otherwise be a megabyte of base64 before the editor drew anything. The
+    # editor fetches each one from its own endpoint, which the browser caches.
+    has_image: bool = False
+    image_version: int = 0
+
+
+class ImageRules(BaseModel):
+    """What the back office may upload, straight from the server.
+
+    Served rather than written into the page so the guidance a manager reads
+    and the rule the server enforces cannot drift apart.
+    """
+
+    ideal_px: int = Field(description="the square the browser crops and exports to")
+    min_px: int = Field(description="below this the picture is soft on a tile")
+    max_px: int = Field(description="hard ceiling on either side")
+    max_bytes: int = Field(description="hard ceiling after cropping")
+    formats: list[str] = Field(description="accepted mime types")
+
+
+class ProductImageIn(BaseModel):
+    """An already-cropped picture from the back office.
+
+    The browser does the resizing and cropping, so this is the final image —
+    the server checks it rather than transforming it, which keeps image
+    processing (and a native image library) out of the deployment.
+    """
+
+    mime: str
+    data_b64: str
 
 
 class OfficeMenuButtonPlace(BaseModel):

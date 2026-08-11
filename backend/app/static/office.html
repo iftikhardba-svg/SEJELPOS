@@ -230,6 +230,21 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
 .celltext { font-size: 12px; line-height: 1.25; white-space: pre-line; }
 .cellprice { font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
 
+/* A cell showing its picture. The name and price stay ON the button rather
+   than beside it — the till draws all three in one tile, and an editor that
+   showed them apart would not be showing what a cashier sees. */
+.cell.hasimg { background-size: cover; background-position: center; }
+.cell.hasimg .celltext, .cell.hasimg .cellprice {
+  color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.85); opacity: 1;
+}
+.cropwrap { display: grid; place-items: center; padding: 8px 0; }
+.cropper {
+  width: 300px; height: 300px; border-radius: 10px; cursor: grab;
+  background: #fff; border: 1px solid var(--border); touch-action: none;
+}
+.cropper:active { cursor: grabbing; }
+.note.warn { color: var(--warn, #a15c00); }
+
 .modal-back {
   position: fixed; inset: 0; background: rgba(0,0,0,.45);
   display: grid; place-items: center; padding: 24px; z-index: 20;
@@ -1140,6 +1155,7 @@ async function openPage(screen) {
       if (b) {
         cell.style.background = b.back_color || '';
         cell.style.color = b.fore_color || '';
+        if (b.has_image) paintCell(cell, b.prodnum, b.image_version);
         cell.append(
           el('span', { className: 'celltext',
             textContent: b.button_text || b.descript }),
@@ -1162,6 +1178,16 @@ async function openPage(screen) {
       + 'product. Colours and labels come from the product.' }));
 
   if (held) {
+    // On the held button rather than on every cell: the grid is a layout
+    // tool, and a picture button in all thirty cells would be thirty things
+    // to mis-click while moving items around.
+    const picture = el('button', { className: 'btn small',
+      textContent: held.has_image ? 'Change picture…' : 'Add a picture…' });
+    picture.addEventListener('click', async () => {
+      const changed = await imageModal(
+        held.prodnum, held.descript, held.has_image);
+      if (changed) renderMenu();
+    });
     const remove = el('button', { className: 'btn small ghost',
       textContent: `Remove "${held.descript}" from this page` });
     remove.addEventListener('click', async () => {
@@ -1172,10 +1198,282 @@ async function openPage(screen) {
         renderMenu();
       } catch (ex) { toast(ex.message); }
     });
-    panel.append(el('div', { style: 'padding: 0 16px 16px' }, remove));
+    panel.append(el('div', { className: 'toolbar' }, [picture, remove]));
   }
 
   host.replaceChildren(panel);
+}
+
+// ---- button pictures ----------------------------------------------------
+//
+// A picture is read faster than a name, which is the point of putting one on a
+// till button. It therefore has to be legible at the size a tile actually
+// draws — square, and small — so the browser crops and resizes to exactly that
+// before anything is uploaded. Doing it here rather than on the server keeps
+// an image library out of the deployment, and it is also the only place a
+// person can say which part of a photograph matters: an automatic centre crop
+// takes the top off half of them.
+
+let imageRules = null;
+const imageUrls = new Map();          // 'prodnum:version' -> object URL
+
+async function rules() {
+  if (!imageRules) imageRules = await api('/image-rules');
+  return imageRules;
+}
+
+/// The picture's bytes as something an <img> or CSS can point at.
+///
+/// Fetched rather than linked because the endpoint needs the session token,
+/// which a bare src cannot send. Keyed by version, so a replaced picture is a
+/// new entry and the old one is never shown again.
+async function tileImage(prodnum, version) {
+  const key = prodnum + ':' + version;
+  if (imageUrls.has(key)) return imageUrls.get(key);
+  try {
+    const res = await fetch(`/v1/office/products/${prodnum}/image`, {
+      headers: { Authorization: 'Bearer ' + token },
+    });
+    if (!res.ok) return null;
+    const url = URL.createObjectURL(await res.blob());
+    imageUrls.set(key, url);
+    return url;
+  } catch { return null; }
+}
+
+/// Paint a cell with its picture, dark enough underneath that the name and
+/// price stay readable over a photograph of anything.
+function paintCell(cell, prodnum, version) {
+  tileImage(prodnum, version).then(url => {
+    if (!url) return;
+    // The same three stops the till uses in _imageTile. If these drift the
+    // editor stops showing what a cashier will actually see, which is the
+    // only reason to draw the picture here at all.
+    cell.style.backgroundImage =
+      'linear-gradient(to bottom, rgba(0,0,0,.40) 0%, rgba(0,0,0,.10) 45%, '
+      + 'rgba(0,0,0,.80) 100%), url(' + url + ')';
+    cell.classList.add('hasimg');
+  });
+}
+
+/// Crop, zoom and upload one button's picture.
+///
+/// Returns true if anything changed. The dialog never uploads what was chosen
+/// from disk — it uploads what is drawn in the frame, at the size a till
+/// draws, so what a manager sees here is what a cashier gets.
+async function imageModal(prodnum, name, hasImage) {
+  const r = await rules();
+  const kb = n => Math.round(n / 1024) + ' KB';
+
+  return new Promise(resolve => {
+    const back = el('div', { className: 'modal-back' });
+    const box = el('div', { className: 'modal' });
+    const error = el('p', { className: 'err hidden' });
+    let changed = false;
+
+    const close = () => {
+      document.removeEventListener('keydown', onKey);
+      back.remove();
+      resolve(changed);
+    };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+
+    // ---- the frame -------------------------------------------------------
+    const SIDE = 300;                 // preview size; the export is r.ideal_px
+    const canvas = el('canvas', { className: 'cropper', width: SIDE, height: SIDE });
+    const ctx2d = canvas.getContext('2d');
+    let img = null, zoom = 1, offX = 0, offY = 0, drag = null;
+
+    // "Cover" — the smallest scale at which the frame is entirely filled.
+    // Below it the tile would show blank edges, so it is also the floor.
+    const cover = () => Math.max(SIDE / img.width, SIDE / img.height);
+
+    function clamp() {
+      const s = cover() * zoom;
+      const maxX = Math.max(0, (img.width * s - SIDE) / 2);
+      const maxY = Math.max(0, (img.height * s - SIDE) / 2);
+      offX = Math.min(maxX, Math.max(-maxX, offX));
+      offY = Math.min(maxY, Math.max(-maxY, offY));
+    }
+
+    function draw(target = canvas, side = SIDE) {
+      const c = target.getContext('2d');
+      // White, not transparent: the export is JPEG, and transparency there
+      // becomes black — which turns a logo with a cut-out background into a
+      // black square on the till.
+      c.fillStyle = '#fff';
+      c.fillRect(0, 0, side, side);
+      if (!img) return;
+      const k = side / SIDE;
+      const s = cover() * zoom * k;
+      c.imageSmoothingQuality = 'high';
+      c.drawImage(
+        img,
+        side / 2 + offX * k - img.width * s / 2,
+        side / 2 + offY * k - img.height * s / 2,
+        img.width * s, img.height * s,
+      );
+    }
+
+    canvas.addEventListener('pointerdown', e => {
+      if (!img) return;
+      drag = { x: e.clientX, y: e.clientY };
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (!drag) return;
+      offX += e.clientX - drag.x;
+      offY += e.clientY - drag.y;
+      drag = { x: e.clientX, y: e.clientY };
+      clamp(); draw();
+    });
+    const stop = () => { drag = null; };
+    canvas.addEventListener('pointerup', stop);
+    canvas.addEventListener('pointercancel', stop);
+
+    const zoomInput = el('input', {
+      type: 'range', min: '100', max: '300', value: '100',
+      ariaLabel: 'Zoom', style: 'width:100%',
+    });
+    zoomInput.addEventListener('input', () => {
+      zoom = Number(zoomInput.value) / 100;
+      clamp(); draw();
+    });
+
+    // ---- picking a file --------------------------------------------------
+    const file = el('input', { type: 'file', accept: r.formats.join(',') });
+    const note = el('p', { className: 'note' });
+    const sizeNote = el('p', { className: 'note' });
+
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      const url = URL.createObjectURL(f);
+      const loaded = new Image();
+      loaded.onload = () => {
+        URL.revokeObjectURL(url);
+        img = loaded;
+        zoom = 1; zoomInput.value = '100'; offX = 0; offY = 0;
+        clamp(); draw();
+        const small = Math.min(img.width, img.height);
+        // Enlarging past the source cannot add detail, so say so rather than
+        // letting somebody upload a blurred tile and wonder why.
+        note.textContent = small < r.min_px
+          ? `That picture is ${img.width}x${img.height}. Below ${r.min_px}px `
+            + `it will look soft on a till — use a larger one if you have it.`
+          : `${img.width}x${img.height} — plenty. Drag to choose what shows, `
+            + `and zoom in if you want a closer crop.`;
+        note.className = small < r.min_px ? 'note warn' : 'note';
+        updateSize();
+      };
+      loaded.onerror = () => {
+        error.textContent = 'That file could not be read as an image.';
+        error.classList.remove('hidden');
+      };
+      loaded.src = url;
+    });
+
+    /// What this crop will actually weigh, shown before it is sent.
+    let exported = null;
+    async function updateSize() {
+      exported = await encode();
+      sizeNote.textContent = exported
+        ? `Will be saved as ${r.ideal_px}x${r.ideal_px} JPEG, ${kb(exported.bytes.length)}`
+        : '';
+    }
+
+    /// Export at the till's own resolution, stepping quality down until it
+    /// fits. Quality is the thing to give up: a tile is 150px on the biggest
+    /// screen we sell to, and nobody has ever noticed q0.6 at that size.
+    async function encode() {
+      if (!img) return null;
+      const out = el('canvas', { width: r.ideal_px, height: r.ideal_px });
+      draw(out, r.ideal_px);
+      for (const q of [0.85, 0.75, 0.65, 0.55, 0.45]) {
+        const blob = await new Promise(res => out.toBlob(res, 'image/jpeg', q));
+        if (!blob) return null;
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (bytes.length <= r.max_bytes) return { bytes, quality: q };
+      }
+      return null;
+    }
+
+    zoomInput.addEventListener('change', updateSize);
+    canvas.addEventListener('pointerup', updateSize);
+
+    // ---- the dialog -------------------------------------------------------
+    box.append(
+      el('h2', { textContent: `Picture for ${name}` }),
+      error,
+      el('p', { className: 'note', textContent:
+        `Square, at least ${r.min_px}x${r.min_px} pixels — ${r.ideal_px}x${r.ideal_px} `
+        + `or larger is ideal. JPEG, PNG or WebP. Whatever you choose is cropped `
+        + `to a square and saved at ${r.ideal_px}x${r.ideal_px}, under `
+        + `${kb(r.max_bytes)}, because that is the size a till button draws. `
+        + `It reaches the tills on their next sync.` }),
+      el('div', { className: 'field' }, [file]),
+      el('div', { className: 'cropwrap' }, [canvas]),
+      el('div', { className: 'field' }, [
+        el('label', { textContent: 'Zoom' }), zoomInput,
+      ]),
+      note, sizeNote,
+    );
+    draw();
+
+    const actions = el('div', { className: 'modal-actions' });
+    if (hasImage) {
+      const remove = el('button', { className: 'btn ghost', textContent: 'Remove picture' });
+      remove.addEventListener('click', async () => {
+        try {
+          await api(`/products/${prodnum}/image`, { method: 'DELETE' });
+          changed = true;
+          toast('Picture removed — tills drop it on their next sync');
+          close();
+        } catch (ex) {
+          error.textContent = ex.message;
+          error.classList.remove('hidden');
+        }
+      });
+      actions.append(remove);
+    }
+    const cancel = el('button', { className: 'btn ghost', textContent: 'Cancel' });
+    cancel.addEventListener('click', close);
+    const save = el('button', { className: 'btn', textContent: 'Save picture' });
+    save.addEventListener('click', async () => {
+      error.classList.add('hidden');
+      if (!img) {
+        error.textContent = 'Choose a picture first.';
+        return error.classList.remove('hidden');
+      }
+      save.disabled = true;
+      try {
+        const out = exported || await encode();
+        if (!out) throw new Error(
+          `That crop will not fit in ${kb(r.max_bytes)}. Zoom out, or use a `
+          + `simpler picture.`);
+        let binary = '';
+        for (const byte of out.bytes) binary += String.fromCharCode(byte);
+        await api(`/products/${prodnum}/image`, {
+          method: 'PUT',
+          body: JSON.stringify({ mime: 'image/jpeg', data_b64: btoa(binary) }),
+        });
+        changed = true;
+        toast('Picture saved — tills pull it on their next sync');
+        close();
+      } catch (ex) {
+        save.disabled = false;
+        error.textContent = ex.message;
+        error.classList.remove('hidden');
+      }
+    });
+    actions.append(cancel, save);
+    box.append(actions);
+
+    back.append(box);
+    back.addEventListener('click', e => { if (e.target === back) close(); });
+    document.body.append(back);
+  });
 }
 
 async function onCell(screen, button, x, y) {

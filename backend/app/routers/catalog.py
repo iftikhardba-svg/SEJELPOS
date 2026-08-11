@@ -21,6 +21,7 @@ every apply is an upsert on a business key.
 from __future__ import annotations
 
 import uuid
+from base64 import b64encode
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select, tuple_
@@ -37,6 +38,7 @@ from ..models import (
     MenuScreen,
     PayMethod,
     Product,
+    ProductImage,
     ProductQuestion,
     Question,
     QuestionChoice,
@@ -54,6 +56,7 @@ from ..schemas import (
     MenuScreenOut,
     PayMethodOut,
     ProductOut,
+    ProductImageOut,
     ProductQuestionOut,
     QuestionChoiceOut,
     QuestionOut,
@@ -88,7 +91,33 @@ TABLES = [
     ("question_choices", QuestionChoice, QuestionChoiceOut, False),
     ("product_questions", ProductQuestion, ProductQuestionOut, False),
     ("combo_items", ComboItem, ComboItemOut, False),
+    # Button pictures. Last, and appended for the same reason as the prompts —
+    # a cursor names its table by index.
+    ("product_images", ProductImage, ProductImageOut, False),
 ]
+
+# The page budget counts rows, and every other row here is a few hundred bytes.
+# An image is tens of thousands, so a full page of them is a download a tablet
+# on a restaurant's wifi would spend a minute on and could not resume partway.
+# Capped separately: the pull takes more round trips and each one lands.
+ROW_CAPS = {"product_images": 12}
+
+
+def _image_out(row: ProductImage) -> ProductImageOut:
+    """Base64 the bytes, and send none at all for a tombstone."""
+    return ProductImageOut(
+        prodnum=row.prodnum,
+        mime=row.mime,
+        width=row.width,
+        height=row.height,
+        byte_size=row.byte_size,
+        data_b64=None if row.is_deleted else b64encode(row.data).decode("ascii"),
+        server_version=row.server_version,
+        is_deleted=row.is_deleted,
+    )
+
+
+SERIALISERS = {"product_images": _image_out}
 
 
 def _parse_cursor(cursor: str | None) -> tuple[int, int, uuid.UUID | None] | None:
@@ -161,12 +190,13 @@ async def get_catalog(
 
             # One extra row tells us whether this table has more without a
             # second query.
-            stmt = stmt.order_by(model.server_version, model.id).limit(budget + 1)
+            take = min(budget, ROW_CAPS.get(name, budget))
+            stmt = stmt.order_by(model.server_version, model.id).limit(take + 1)
             rows = list((await session.execute(stmt)).scalars().all())
 
-            more_in_table = len(rows) > budget
+            more_in_table = len(rows) > take
             if more_in_table:
-                rows = rows[:budget]
+                rows = rows[:take]
 
             collected[name] = rows
             budget -= len(rows)
@@ -180,7 +210,10 @@ async def get_catalog(
 
     groups = [collected[name] for name, _, _, _ in TABLES]
     serialised = {
-        name: [schema.model_validate(r) for r in collected[name]]
+        name: [
+            SERIALISERS.get(name, schema.model_validate)(r)
+            for r in collected[name]
+        ]
         for name, _, schema, _ in TABLES
     }
 

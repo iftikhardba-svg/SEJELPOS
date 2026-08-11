@@ -11,6 +11,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:sqlite3/sqlite3.dart';
 import 'package:uuid/uuid.dart';
@@ -34,6 +35,8 @@ class CatalogProduct {
     this.backColor,
     this.posX,
     this.posY,
+    this.image,
+    this.imageVersion = 0,
   });
 
   final int prodnum;
@@ -54,6 +57,15 @@ class CatalogProduct {
   /// page context.
   final int? posX;
   final int? posY;
+
+  /// The picture on the button, already the size a tile draws. Null on a
+  /// product with none, which is every product until somebody sets one — a
+  /// menu of 560 photographs is a project, not a default.
+  final Uint8List? image;
+
+  /// Which catalog version the picture is at, so a replaced one is a
+  /// different cache key rather than the old bytes drawn forever.
+  final int imageVersion;
 
   /// The label a cashier reads.
   String get label => (buttonText == null || buttonText!.isEmpty)
@@ -454,9 +466,14 @@ class PosDatabase {
       '       p.price_a, p.price_b, p.price_c, p.price_d, p.price_e, '
       '       p.price_f, p.price_g, p.price_h, p.price_i, p.price_j, '
       '       p.button_text, p.fore_color, p.back_color, '
+      '       i.data AS image_data, i.server_version AS image_version, '
       '       b.pos_x, b.pos_y '
       'FROM menu_button b '
       'JOIN product p ON p.prodnum = b.prodnum '
+      // Outer: a page of buttons is drawn whether or not anyone has put
+      // pictures on them, and most menus never will.
+      'LEFT JOIN product_image i '
+      '  ON i.prodnum = p.prodnum AND i.is_deleted = 0 '
       'WHERE b.menu_id = ? AND b.is_deleted = 0 '
       '  AND p.is_active = 1 AND p.is_deleted = 0 AND p.is_modifier = 0 '
       'ORDER BY b.pos_y, b.pos_x, b.position',
@@ -661,7 +678,18 @@ class PosDatabase {
         backColor: _maybe(r, 'back_color'),
         posX: _maybeInt(r, 'pos_x'),
         posY: _maybeInt(r, 'pos_y'),
+        image: _maybeBlob(r, 'image_data'),
+        imageVersion: _maybeInt(r, 'image_version') ?? 0,
       );
+
+  static Uint8List? _maybeBlob(Row r, String column) {
+    try {
+      final value = r[column];
+      return value is Uint8List && value.isNotEmpty ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Not every query selects the button columns, so reading one that was not
   /// asked for must be absent rather than an error.

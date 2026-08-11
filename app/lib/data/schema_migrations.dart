@@ -26,7 +26,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 /// What `assets/schema.sql` currently creates.
-const int tabletSchemaVersion = 5;
+const int tabletSchemaVersion = 6;
 
 /// version -> the statements that lift a database TO that version.
 const Map<int, List<String>> _steps = {
@@ -150,6 +150,28 @@ const Map<int, List<String>> _steps = {
   // drive-thru.
   5: [
     'ALTER TABLE device ADD COLUMN active_sale_type INTEGER',
+  ],
+  // A picture on the button. Its own table, not a column on product, for the
+  // same reason it is one on the server: a product row is read on every
+  // repaint of the menu and an image is a thousand times its size.
+  6: [
+    '''
+    CREATE TABLE IF NOT EXISTS product_image (
+        prodnum        INTEGER PRIMARY KEY,
+        mime           TEXT NOT NULL,
+        data           BLOB NOT NULL,
+        width          INTEGER NOT NULL DEFAULT 0,
+        height         INTEGER NOT NULL DEFAULT 0,
+        byte_size      INTEGER NOT NULL DEFAULT 0,
+        server_version INTEGER NOT NULL DEFAULT 0,
+        is_deleted     INTEGER NOT NULL DEFAULT 0
+    )
+    ''',
+    // Same trap as the prompts at v4: any picture uploaded before this build
+    // shipped carries a server_version BELOW an installed till's watermark,
+    // so an incremental pull would skip every one of them and the tiles would
+    // stay blank for good. Re-pulling is free — every apply is an upsert.
+    "UPDATE sync_state SET last_version = 0 WHERE table_name = 'catalog'",
   ],
 };
 

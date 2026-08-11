@@ -260,6 +260,21 @@ CREATE TABLE combo_item (
 );
 CREATE INDEX ix_combo_item_parent ON combo_item(parent_prodnum, sort_order);
 
+-- The picture on a product's till button. A table rather than a column on
+-- product: a product row is read on every repaint of the menu grid, and an
+-- image is roughly a thousand times its size. The bytes live here rather than
+-- behind a URL because a till has to draw its menu with no network at all.
+CREATE TABLE product_image (
+    prodnum        INTEGER PRIMARY KEY,       -- one picture per product
+    mime           TEXT NOT NULL,             -- image/jpeg from the back office
+    data           BLOB NOT NULL,
+    width          INTEGER NOT NULL DEFAULT 0,
+    height         INTEGER NOT NULL DEFAULT 0,
+    byte_size      INTEGER NOT NULL DEFAULT 0,
+    server_version INTEGER NOT NULL DEFAULT 0,
+    is_deleted     INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE pay_method (
     methodnum      INTEGER PRIMARY KEY,       -- DBA.MethodPay.METHODNUM
     descript       TEXT NOT NULL,             -- CASH / MADA / Visa ...

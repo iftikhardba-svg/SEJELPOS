@@ -20,8 +20,10 @@ from __future__ import annotations
 import datetime as dt
 import secrets
 import uuid
+from base64 import b64decode
+from binascii import Error as BinasciiError
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, or_, select
 
 from ..config import settings
@@ -41,6 +43,7 @@ from ..models import (
     MenuPage,
     MenuScreen,
     Product,
+    ProductImage,
     ProductQuestion,
     Question,
     QuestionChoice,
@@ -76,7 +79,9 @@ from ..schemas import (
     OfficeMenuScreenOut,
     OfficeMenuScreenUpdate,
     OfficeProductCreate,
+    ImageRules,
     OfficeProductOut,
+    ProductImageIn,
     OfficeProductUpdate,
     OfficeQuestionOut,
     OfficeSaleOut,
@@ -109,7 +114,7 @@ async def _next_catalog_version(session, tenant_id: uuid.UUID) -> int:
     highest = 0
     for model in (Product, MenuScreen, SalesType, ReportCategory, Menu,
                   MenuPage, MenuButton, Question, QuestionChoice,
-                  ProductQuestion, ComboItem):
+                  ProductQuestion, ComboItem, ProductImage):
         value = (
             await session.execute(
                 select(func.max(model.server_version)).where(
@@ -383,7 +388,8 @@ async def list_questions(ctx: OfficeContext = OfficeDep) -> list[OfficeQuestionO
 
 
 def _product_out(p: Product, menu_ids: list[int] | None = None,
-                 question_nos: list[int] | None = None) -> OfficeProductOut:
+                 question_nos: list[int] | None = None,
+                 image: ProductImage | None = None) -> OfficeProductOut:
     return OfficeProductOut(
         id=p.id,
         prodnum=p.prodnum,
@@ -403,6 +409,8 @@ def _product_out(p: Product, menu_ids: list[int] | None = None,
         button_text=p.button_text,
         fore_color=p.fore_color,
         back_color=p.back_color,
+        has_image=bool(image and not image.is_deleted),
+        image_version=image.server_version if image else 0,
         server_version=p.server_version,
         menu_ids=menu_ids or [],
         question_nos=question_nos or [],
@@ -555,8 +563,16 @@ async def get_product(
                 )
             ).scalars().all()
         )
+        image = (
+            await session.execute(
+                select(ProductImage).where(
+                    ProductImage.tenant_id == ctx.tenant_id,
+                    ProductImage.prodnum == product.prodnum,
+                )
+            )
+        ).scalar_one_or_none()
 
-    return _product_out(product, menu_ids, question_nos)
+    return _product_out(product, menu_ids, question_nos, image=image)
 
 
 @router.post("/products", response_model=OfficeProductOut, status_code=201)
@@ -1200,11 +1216,21 @@ async def list_menu_buttons(
 
         rows = (
             await session.execute(
-                select(MenuButton, Product)
+                select(MenuButton, Product, ProductImage)
                 .join(
                     Product,
                     (Product.prodnum == MenuButton.prodnum)
                     & (Product.tenant_id == MenuButton.tenant_id),
+                    isouter=True,
+                )
+                # Joined rather than fetched per cell: a thirty-button page
+                # would otherwise be thirty round trips before the editor
+                # could say which buttons have a picture.
+                .join(
+                    ProductImage,
+                    (ProductImage.prodnum == MenuButton.prodnum)
+                    & (ProductImage.tenant_id == MenuButton.tenant_id)
+                    & (ProductImage.is_deleted.is_(False)),
                     isouter=True,
                 )
                 .where(
@@ -1228,8 +1254,10 @@ async def list_menu_buttons(
             back_color=p.back_color if p else None,
             price_a=p.price_a if p else 0,
             is_active=bool(p.is_active) if p else False,
+            has_image=img is not None,
+            image_version=img.server_version if img else 0,
         )
-        for b, p in rows
+        for b, p, img in rows
     ]
 
 
@@ -1899,3 +1927,274 @@ async def list_sales(
         )
         for s in rows
     ]
+
+
+# --------------------------------------------------------------------------
+# Button pictures
+#
+# A picture on a till button is read faster than a name, which is the whole
+# point of one: staff on a busy counter find an item by sight. So it has to be
+# legible at the size a tile actually draws — and a tile is square, 84 to 150
+# logical pixels, which is up to ~450 physical pixels on a tablet.
+#
+# The browser crops and resizes before upload. That keeps a native image
+# library out of the deployment, and it is also the only place a human can say
+# which part of a photograph matters — a server-side centre crop would cut the
+# top off half of them.
+# --------------------------------------------------------------------------
+
+# What the tile draws at, on the densest screen we sell to. Bigger buys
+# nothing a cashier can see and costs every device the download.
+IMAGE_IDEAL_PX = 512
+# Below this a picture is visibly soft on a tile, so the browser warns.
+IMAGE_MIN_PX = 256
+# A ceiling, not a target: an upload this big is a mistake somewhere.
+IMAGE_MAX_PX = 1024
+# ~90 KB. A 512px JPEG of food lands around 50-70 KB, and 560 products would
+# be ~35 MB of catalog if every one had a picture — which is why the catalog
+# ships them a few rows at a time.
+IMAGE_MAX_BYTES = 90_000
+IMAGE_FORMATS = ["image/jpeg", "image/png", "image/webp"]
+
+_MAGIC = {
+    "image/jpeg": (b"\xff\xd8\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/webp": (b"RIFF",),
+}
+
+
+def _png_size(data: bytes) -> tuple[int, int] | None:
+    # IHDR is always the first chunk: 8 byte signature, 4 length, 4 type.
+    if len(data) < 24 or data[12:16] != b"IHDR":
+        return None
+    return (
+        int.from_bytes(data[16:20], "big"),
+        int.from_bytes(data[20:24], "big"),
+    )
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """Walk the markers to the frame header.
+
+    Worth doing rather than trusting the browser's word: the row says what the
+    server actually holds, and a lie there is the kind that surfaces months
+    later as a tile that draws wrong on one device.
+    """
+    i = 2
+    end = len(data)
+    while i + 9 < end:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        # Standalone markers carry no length.
+        if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+            i += 2
+            continue
+        length = int.from_bytes(data[i + 2:i + 4], "big")
+        # SOF0..SOF15, excluding the four that are not frame headers.
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            return (
+                int.from_bytes(data[i + 7:i + 9], "big"),
+                int.from_bytes(data[i + 5:i + 7], "big"),
+            )
+        i += 2 + length
+    return None
+
+
+def _webp_size(data: bytes) -> tuple[int, int] | None:
+    if len(data) < 30 or data[8:12] != b"WEBP":
+        return None
+    kind = data[12:16]
+    if kind == b"VP8X":
+        return (
+            int.from_bytes(data[24:27], "little") + 1,
+            int.from_bytes(data[27:30], "little") + 1,
+        )
+    if kind == b"VP8L":
+        bits = int.from_bytes(data[21:25], "little")
+        return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+    if kind == b"VP8 ":
+        return (
+            int.from_bytes(data[26:28], "little") & 0x3FFF,
+            int.from_bytes(data[28:30], "little") & 0x3FFF,
+        )
+    return None
+
+
+def _measure(mime: str, data: bytes) -> tuple[int, int]:
+    """The picture's real size, or a 400 saying it is not what it claims."""
+    reader = {
+        "image/png": _png_size,
+        "image/jpeg": _jpeg_size,
+        "image/webp": _webp_size,
+    }[mime]
+    size = reader(data)
+    if size is None or size[0] <= 0 or size[1] <= 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"that file is not readable as {mime}",
+        )
+    return size
+
+
+@router.get("/image-rules", response_model=ImageRules)
+async def image_rules(ctx: OfficeContext = OfficeDep) -> ImageRules:
+    """What may be uploaded — the page shows this rather than repeating it."""
+    return ImageRules(
+        ideal_px=IMAGE_IDEAL_PX,
+        min_px=IMAGE_MIN_PX,
+        max_px=IMAGE_MAX_PX,
+        max_bytes=IMAGE_MAX_BYTES,
+        formats=IMAGE_FORMATS,
+    )
+
+
+@router.get("/products/{prodnum}/image")
+async def get_product_image(
+    prodnum: int,
+    ctx: OfficeContext = OfficeDep,
+) -> Response:
+    """The bytes, for the editor to draw.
+
+    Served as an image rather than base64 in a list so a page of thirty
+    buttons is thirty cacheable requests instead of a megabyte of JSON before
+    anything appears.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        row = (
+            await session.execute(
+                select(ProductImage).where(
+                    ProductImage.tenant_id == ctx.tenant_id,
+                    ProductImage.prodnum == prodnum,
+                    ProductImage.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no image on that product")
+    return Response(
+        content=row.data,
+        media_type=row.mime,
+        # Keyed by the catalog version in the URL, so a replaced picture is a
+        # different URL and the old one may be cached hard.
+        headers={"Cache-Control": "private, max-age=86400"},
+    )
+
+
+@router.put("/products/{prodnum}/image", response_model=OfficeProductOut)
+async def set_product_image(
+    prodnum: int,
+    body: ProductImageIn,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeProductOut:
+    """Put a picture on a product's till button.
+
+    Replacing is an update to the same row, so a device sees one version
+    change rather than a tombstone and an insert — and never holds two
+    pictures for one button while a pull is halfway through.
+    """
+    if body.mime not in IMAGE_FORMATS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{body.mime} is not one of {', '.join(IMAGE_FORMATS)}",
+        )
+    try:
+        data = b64decode(body.data_b64, validate=True)
+    except (BinasciiError, ValueError):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "the image is not valid base64")
+    if not data:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "the image is empty")
+    if len(data) > IMAGE_MAX_BYTES:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"the image is {len(data) // 1024} KB; the limit is "
+            f"{IMAGE_MAX_BYTES // 1024} KB — crop it smaller or save it at "
+            f"lower quality",
+        )
+    if not any(data.startswith(m) for m in _MAGIC[body.mime]):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"the bytes are not a {body.mime.split('/')[1].upper()} file",
+        )
+    width, height = _measure(body.mime, data)
+    if width > IMAGE_MAX_PX or height > IMAGE_MAX_PX:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"{width}x{height} is larger than the {IMAGE_MAX_PX}px limit",
+        )
+
+    async with tenant_session(ctx.tenant_id) as session:
+        product = (
+            await session.execute(
+                select(Product).where(
+                    Product.tenant_id == ctx.tenant_id,
+                    Product.prodnum == prodnum,
+                )
+            )
+        ).scalar_one_or_none()
+        if product is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such product")
+
+        version = await _next_catalog_version(session, ctx.tenant_id)
+        row = (
+            await session.execute(
+                select(ProductImage).where(
+                    ProductImage.tenant_id == ctx.tenant_id,
+                    ProductImage.prodnum == prodnum,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = ProductImage(tenant_id=ctx.tenant_id, prodnum=prodnum)
+            session.add(row)
+        row.mime = body.mime
+        row.data = data
+        row.width = width
+        row.height = height
+        row.byte_size = len(data)
+        row.is_deleted = False
+        row.server_version = version
+        await session.flush()
+        return _product_out(product, image=row)
+
+
+@router.delete("/products/{prodnum}/image", response_model=OfficeProductOut)
+async def clear_product_image(
+    prodnum: int,
+    ctx: OfficeContext = OfficeDep,
+) -> OfficeProductOut:
+    """Take the picture off the button.
+
+    The row stays as a tombstone with its bytes dropped: a device has to be
+    told the picture went, and a deleted row cannot tell it anything.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        product = (
+            await session.execute(
+                select(Product).where(
+                    Product.tenant_id == ctx.tenant_id,
+                    Product.prodnum == prodnum,
+                )
+            )
+        ).scalar_one_or_none()
+        if product is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such product")
+
+        row = (
+            await session.execute(
+                select(ProductImage).where(
+                    ProductImage.tenant_id == ctx.tenant_id,
+                    ProductImage.prodnum == prodnum,
+                )
+            )
+        ).scalar_one_or_none()
+        if row is not None and not row.is_deleted:
+            row.is_deleted = True
+            row.data = b""
+            row.byte_size = 0
+            row.server_version = await _next_catalog_version(
+                session, ctx.tenant_id
+            )
+            await session.flush()
+        return _product_out(product, image=row)
