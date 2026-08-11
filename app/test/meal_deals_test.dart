@@ -203,7 +203,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2192), qty: 1, extras: configuredOffer())],
       salesType: type(2025),
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
     );
 
     // Nothing chosen inside the meal moves the price.
@@ -240,7 +242,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2192), qty: 2, extras: configuredOffer())],
       salesType: type(2025),
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
     );
 
     expect(sale.finalTotal, 3000);
@@ -259,7 +263,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2192), qty: 1, extras: configuredOffer())],
       salesType: type(2025),
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
     );
 
     // The offer itself routes nowhere. Without the group rule the kitchen
@@ -310,7 +316,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2152), qty: 1)],   // Grill + DT
       salesType: type(2025),
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
     );
 
     expect(sale.kitchenStations, ['DT', 'Grill']);

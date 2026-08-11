@@ -44,6 +44,7 @@ CompletedSale chargeOneItem(
   double qty = 1,
   int saleTypeNo = 2025,
   int methodnum = 1010,
+  String methodName = 'MADA',
   int empnum = 0,
 }) {
   final salesType = db.salesTypes().firstWhere((t) => t.no == saleTypeNo);
@@ -53,7 +54,7 @@ CompletedSale chargeOneItem(
   return db.completeSale(
     cart: [CartLine(product: product, qty: qty)],
     salesType: salesType,
-    methodnum: methodnum,
+    payments: [Tender.whole(methodnum: methodnum, name: methodName)],
     empnum: empnum,
   );
 }

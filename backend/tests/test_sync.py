@@ -169,6 +169,53 @@ async def test_a_chosen_item_stays_attached_to_its_meal(client, seeded):
     assert str(rows[1].parent_line) == parent["line_uuid"]
 
 
+async def test_a_bill_settled_two_ways_is_one_sale(client, seeded):
+    """Half on a card and the rest in cash arrives as one sale with two
+    payments — not two sales, which would split the tax invoice, the order
+    number and the kitchen ticket for one customer."""
+    sale = make_sale(total=3800, zatca_icv=93)
+    now = sale["payments"][0]["paid_at"]
+    sale["payments"] = [
+        {"payment_uuid": str(uuid.uuid4()), "methodnum": 1010, "tender": 1000,
+         "change_given": 0, "amount": 1000, "paid_at": now},
+        # Cash over the amount: the difference is change and is NOT part of
+        # what the sale was paid.
+        {"payment_uuid": str(uuid.uuid4()), "methodnum": 1001, "tender": 5000,
+         "change_given": 2200, "amount": 2800, "paid_at": now},
+    ]
+
+    r = await client.post("/v1/sales", json=[sale], headers=auth(seeded))
+    assert r.json()["rejected"] == [], r.text
+
+    from app.db import SessionLocal
+    from app.models import SalePayment
+    from sqlalchemy import select
+
+    async with SessionLocal() as s:
+        rows = (await s.execute(
+            select(SalePayment).where(
+                SalePayment.sale_uuid == uuid.UUID(sale["sale_uuid"])
+            ).order_by(SalePayment.methodnum)
+        )).scalars().all()
+
+    assert [p.methodnum for p in rows] == [1001, 1010]
+    assert sum(p.amount for p in rows) == 3800
+    assert rows[0].change_given == 2200
+
+
+async def test_tenders_that_miss_the_total_are_refused(client, seeded):
+    sale = make_sale(total=3800, zatca_icv=94)
+    now = sale["payments"][0]["paid_at"]
+    sale["payments"] = [
+        {"payment_uuid": str(uuid.uuid4()), "methodnum": 1010, "tender": 1000,
+         "change_given": 0, "amount": 1000, "paid_at": now},
+    ]
+
+    r = await client.post("/v1/sales", json=[sale], headers=auth(seeded))
+    assert r.json()["accepted"] == []
+    assert "do not cover" in r.json()["rejected"][0]["error"]
+
+
 async def test_a_line_hanging_off_another_sale_is_refused(client, seeded):
     """A parent from outside this sale means a bill with an item that belongs
     to nothing reachable from it."""

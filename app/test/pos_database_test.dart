@@ -39,7 +39,9 @@ void main() {
         CartLine(product: prod(2010, 2152), qty: 1),      // Hummos Lahm @ 2400
       ],
       salesType: type(2025),
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
       orderNo: 124,
     );
 
@@ -66,7 +68,9 @@ void main() {
       () => db.completeSale(
         cart: [CartLine(product: prod(2010, 2013), qty: 1)],
         salesType: keeta,
-        methodnum: 1010,
+        payments: [
+          Tender.whole(methodnum: 1010, name: 'MADA'),
+        ],
       ),
       throwsStateError,
       reason: 'no external reference given',
@@ -75,7 +79,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2013), qty: 1)],
       salesType: keeta,
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
       externalRef: 'KEETA-58211',
     );
     expect(sale.finalTotal, 900, reason: 'tier B, not tier A');
@@ -87,7 +93,9 @@ void main() {
     db.completeSale(
       cart: [CartLine(product: prod(2010, 2013), qty: 1)],
       salesType: type(2025),
-      methodnum: 1001,
+      payments: [
+        Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+      ],
     );
     expect(db.outboxDepth(), 1);
   });
@@ -100,7 +108,9 @@ void main() {
         CartLine(product: prod(2023, 2058), qty: 2),      // 16 = Shawarma
       ],
       salesType: type(2025),
-      methodnum: 1001,
+      payments: [
+        Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+      ],
     );
 
     expect(sale.kitchenStations, ['DT', 'Grill', 'Shawarma']);
@@ -124,7 +134,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2013), qty: 3)],
       salesType: type(2025),
-      methodnum: 1001,
+      payments: [
+        Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+      ],
     );
     expect(sale.kitchenStations, isEmpty);
     expect(db.kitchenTicketLines(sale.saleUuid), isEmpty);
@@ -134,7 +146,9 @@ void main() {
     String make() => db.completeSale(
           cart: [CartLine(product: prod(2010, 2013), qty: 1)],
           salesType: type(2025),
-          methodnum: 1001,
+          payments: [
+            Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+          ],
         ).receiptNo;
 
     expect([make(), make(), make()],
@@ -144,7 +158,7 @@ void main() {
   test('an empty cart cannot be charged', () {
     expect(
       () => db.completeSale(
-          cart: [], salesType: type(2025), methodnum: 1001),
+          cart: [], salesType: type(2025), payments: [Tender.whole(methodnum: 1001, name: 'CASH', isCash: true)]),
       throwsStateError,
     );
   });
@@ -153,7 +167,9 @@ void main() {
     final sale = db.completeSale(
       cart: [CartLine(product: prod(2010, 2013), qty: 1)],
       salesType: type(2026),           // tier J
-      methodnum: 1001,
+      payments: [
+        Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+      ],
     );
     expect(sale.finalTotal, 0);
     expect(sale.netTotal, 0);

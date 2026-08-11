@@ -43,7 +43,9 @@ void main() {
               qty: 1),
         ],
         salesType: db.salesTypes().firstWhere((t) => t.no == 2025),
-        methodnum: 1001,
+        payments: [
+          Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+        ],
       );
       expect(first.receiptNo, 'T01-000001');
       db.dispose();
@@ -63,7 +65,9 @@ void main() {
               qty: 1),
         ],
         salesType: db.salesTypes().firstWhere((t) => t.no == 2025),
-        methodnum: 1001,
+        payments: [
+          Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+        ],
       );
       expect(second.receiptNo, 'T01-000002',
           reason: 'receipt numbers must never restart after a reboot');
@@ -102,7 +106,9 @@ void main() {
       db.completeSale(
         cart: [CartLine(product: lahm, qty: 1)],
         salesType: db.salesTypes().firstWhere((t) => t.no == 2025),
-        methodnum: 1001,
+        payments: [
+          Tender.whole(methodnum: 1001, name: 'CASH', isCash: true),
+        ],
       );
 
       final calls = <String>[];
@@ -177,7 +183,9 @@ void main() {
           netTotal: 10000,
           taxTotal: 1500,
           finalTotal: 11500,
-          payMethod: 'MADA',
+          payments: const [
+            ReceiptTender(name: 'MADA', amount: 11500),
+          ],
           zatcaQr: qr,
         );
 
@@ -193,6 +201,35 @@ void main() {
       expect(s, contains('2x HUMMOS'));
       // Partial cut is the last command.
       expect(bytes.sublist(bytes.length - 4), [0x1D, 0x56, 0x42, 0x00]);
+    });
+
+    test('what came inside a meal prints under it, without a price', () {
+      final s = String.fromCharCodes(buildReceipt(ReceiptData(
+        brandName: 'Fatima Restaurant',
+        vatNumber: '310000000000003',
+        receiptNo: 'T01-000043',
+        orderNo: '18',
+        dateTime: DateTime(2026, 8, 4, 20, 15),
+        lines: const [
+          ReceiptLine(qty: 1, name: 'Shawa Sandw Ckn', amount: 500),
+          ReceiptLine(qty: 1, name: 'Saj Bread', amount: 0, depth: 1),
+          ReceiptLine(qty: 2, name: '1 GARLIC', amount: 0, depth: 1),
+        ],
+        netTotal: 435,
+        taxTotal: 65,
+        finalTotal: 500,
+        payments: const [ReceiptTender(name: 'MADA', amount: 500)],
+      )));
+
+      // Indented, and no "1x" on something that is one of the item above it.
+      expect(s, contains('  Saj Bread'));
+      expect(s, isNot(contains('1x Saj Bread')));
+      // A count that is not one still has to show: two garlics is a different
+      // order from one.
+      expect(s, contains('  2x 1 GARLIC'));
+      // No price column against them. A figure on the paper is a figure the
+      // customer paid, and 0.00 down the side of a meal invites the question.
+      expect(s, isNot(contains('0.00')));
     });
 
     test('unsigned receipts say so instead of pretending', () {

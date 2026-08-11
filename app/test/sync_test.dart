@@ -327,7 +327,9 @@ void main() {
           .completeSale(
             cart: [CartLine(product: hummos, qty: 2)],
             salesType: db.salesTypes().firstWhere((t) => t.no == 2025),
-            methodnum: 1010,
+            payments: [
+              Tender.whole(methodnum: 1010, name: 'MADA'),
+            ],
             orderNo: 42,
           )
           .saleUuid;
@@ -392,7 +394,9 @@ void main() {
       db.completeSale(
         cart: [CartLine(product: lahm, qty: 1)],
         salesType: db.salesTypes().firstWhere((t) => t.no == 2025),
-        methodnum: 1010,
+        payments: [
+          Tender.whole(methodnum: 1010, name: 'MADA'),
+        ],
         orderNo: 9,
       );
 

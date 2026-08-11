@@ -49,6 +49,7 @@ class TillScreen extends StatefulWidget {
 
 class _TillScreenState extends State<TillScreen> {
   late final List<SalesType> _salesTypes;
+  late final List<PayMethod> _payMethods;
   late final List<({int menuId, String name})> _screens;
   late SalesType _salesType;
   late int _activeMenu;
@@ -73,6 +74,7 @@ class _TillScreenState extends State<TillScreen> {
   void initState() {
     super.initState();
     _salesTypes = widget.db.salesTypes();
+    _payMethods = widget.db.payMethods();
     _screens = widget.db.menuScreens();
     _salesType = _salesTypes.first;
     _menu = widget.db.defaultMenu();
@@ -259,7 +261,27 @@ class _TillScreenState extends State<TillScreen> {
     });
   }
 
-  Future<void> _charge(int methodnum, String methodName) async {
+  /// Take a whole bill on one method. Cash asks what was handed over first —
+  /// that is where change comes from, and a till that assumes exact money
+  /// makes the cashier do the subtraction in their head.
+  Future<void> _take(PayMethod method) async {
+    if (_cart.isEmpty) return;
+    int? tendered;
+    if (method.isCash) {
+      tendered = await _askCashReceived(_grossTotal);
+      if (tendered == null) return;
+    }
+    await _charge([
+      Tender.whole(
+        methodnum: method.methodnum,
+        name: method.descript,
+        tendered: tendered,
+        isCash: method.isCash,
+      ),
+    ]);
+  }
+
+  Future<void> _charge(List<Tender> tenders) async {
     if (_cart.isEmpty) return;
     if (_salesType.requiresExternalRef &&
         _refController.text.trim().isEmpty) {
@@ -288,7 +310,7 @@ class _TillScreenState extends State<TillScreen> {
       sale = widget.db.completeSale(
         cart: List.of(_cart),
         salesType: _salesType,
-        methodnum: methodnum,
+        payments: tenders,
         empnum: empnum,
         externalRef: _salesType.requiresExternalRef
             ? _refController.text.trim()
@@ -311,8 +333,10 @@ class _TillScreenState extends State<TillScreen> {
 
     // Paper and kitchen happen off the critical path: the cashier moves to
     // the next customer whether or not the printer answers.
-    unawaited(_printReceipt(sale, methodName, completedOrder));
+    unawaited(_printReceipt(sale, completedOrder));
     unawaited(widget.worker?.syncNow());
+
+    final change = sale.payments.fold<int>(0, (a, p) => a + p.change);
 
     // The cashier picker above may have awaited, so the till could be gone.
     if (!mounted) return;
@@ -324,10 +348,25 @@ class _TillScreenState extends State<TillScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Receipt ${sale.receiptNo} · $methodName'),
+            Text('Receipt ${sale.receiptNo} · '
+                '${sale.payments.map((p) => p.name).join(" + ")}'),
             const SizedBox(height: 4),
             Text('Total ${formatHalalas(sale.finalTotal)} '
                 '(VAT ${formatHalalas(sale.taxTotal)})'),
+            // The number the cashier is about to count out of the drawer, big
+            // enough to read without leaning in.
+            if (change > 0) ...[
+              const SizedBox(height: 8),
+              Text('CHANGE ${formatHalalas(change)}',
+                  style: const TextStyle(
+                      fontSize: 22, fontWeight: FontWeight.bold)),
+            ],
+            if (sale.payments.length > 1) ...[
+              const SizedBox(height: 4),
+              for (final p in sale.payments)
+                Text('${p.name}  ${formatHalalas(p.amount)}',
+                    style: const TextStyle(fontSize: 12)),
+            ],
             if (sale.kitchenStations.isNotEmpty) ...[
               const SizedBox(height: 8),
               Text('Kitchen: ${sale.kitchenStations.join(", ")}'),
@@ -344,20 +383,30 @@ class _TillScreenState extends State<TillScreen> {
     );
   }
 
-  Future<void> _printReceipt(
-      CompletedSale sale, String methodName, String orderLabel) async {
+  Future<void> _printReceipt(CompletedSale sale, String orderLabel) async {
     final device =
         widget.db.raw.select('SELECT * FROM device WHERE id = 1').first;
     final host = device['printer_host'] as String?;
     if (host == null || host.isEmpty) return; // no printer configured
 
+    // Depth comes from the stored parent chain, not from what the screen
+    // happens to be holding: the receipt has to describe the sale that was
+    // recorded. Children always follow their parent in line order, so one
+    // pass resolves every depth.
+    final depths = <String, int>{};
     final lines = [
       for (final l in widget.db.saleLines(sale.saleUuid))
-        ReceiptLine(
-          qty: (l['qty'] as num).toDouble(),
-          name: l['line_des'] as String,
-          amount: l['line_total'] as int,
-        ),
+        () {
+          final parent = l['parent_line'] as String?;
+          final depth = parent == null ? 0 : (depths[parent] ?? 0) + 1;
+          depths[l['line_uuid'] as String] = depth;
+          return ReceiptLine(
+            qty: (l['qty'] as num).toDouble(),
+            name: l['line_des'] as String,
+            amount: l['line_total'] as int,
+            depth: depth,
+          );
+        }(),
     ];
     final bytes = buildReceipt(ReceiptData(
       // From the device row, not a constant: enrolment delivers the seller
@@ -372,7 +421,10 @@ class _TillScreenState extends State<TillScreen> {
       netTotal: sale.netTotal,
       taxTotal: sale.taxTotal,
       finalTotal: sale.finalTotal,
-      payMethod: methodName,
+      payments: [
+        for (final p in sale.payments)
+          ReceiptTender(name: p.name, amount: p.amount, change: p.change),
+      ],
       // Null on a device not provisioned to sign — the receipt then carries
       // the UNSIGNED banner rather than a QR that would not validate.
       zatcaQr: sale.stamp?.qr,
@@ -827,42 +879,107 @@ class _TillScreenState extends State<TillScreen> {
                 const Divider(),
                 _totalRow('Total', _grossTotal, bold: true),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _cart.isEmpty
-                            ? null
-                            : () => _charge(1001, 'CASH'),
-                        child: const Text('CASH'),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _cart.isEmpty
-                            ? null
-                            : () => _charge(1002, 'Visa'),
-                        child: const Text('Visa'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed:
-                        _cart.isEmpty ? null : () => _charge(1010, 'MADA'),
-                    child: Text('Charge ${formatHalalas(_grossTotal)} · MADA'),
-                  ),
-                ),
+                _payButtons(),
               ],
             ),
           ),
         ],
       ),
     );
+  }
+
+  /// The methods, the big one, and the way out to a split bill.
+  Widget _payButtons() {
+    final primary = _primaryMethod;
+    final others = [
+      for (final m in _payMethods)
+        if (m.methodnum != primary?.methodnum) m,
+    ];
+    final ready = _cart.isNotEmpty;
+
+    return Column(
+      children: [
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final method in others)
+              SizedBox(
+                width: 92,
+                child: OutlinedButton(
+                  onPressed: ready ? () => unawaited(_take(method)) : null,
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+                  child: Text(
+                    method.descript,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        if (primary != null)
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              onPressed: ready ? () => unawaited(_take(primary)) : null,
+              child: Text('Charge ${formatHalalas(_grossTotal)} · '
+                  '${primary.descript}'),
+            ),
+          ),
+        TextButton.icon(
+          onPressed: ready ? () => unawaited(_splitPayment()) : null,
+          icon: const Icon(Icons.call_split, size: 18),
+          label: const Text('Split payment'),
+        ),
+      ],
+    );
+  }
+
+  /// The method the big button charges.
+  ///
+  /// The sale type's own default wins where the catalog sets one. Nothing in
+  /// this customer's data does, so MADA takes it: it is ~65% of their
+  /// payments, and the button a cashier hits without looking should be the
+  /// one they hit two times in three.
+  PayMethod? get _primaryMethod {
+    if (_payMethods.isEmpty) return null;
+    final byNumber = {for (final m in _payMethods) m.methodnum: m};
+    final preferred = byNumber[_salesType.defaultMethodnum];
+    if (preferred != null) return preferred;
+    for (final m in _payMethods) {
+      if (m.descript.toUpperCase() == 'MADA') return m;
+    }
+    for (final m in _payMethods) {
+      if (!m.isCash) return m;
+    }
+    return _payMethods.first;
+  }
+
+  /// How much cash was handed over. Returns null if the cashier backs out.
+  Future<int?> _askCashReceived(int due) {
+    return showDialog<int>(
+      context: context,
+      builder: (context) => _CashDialog(due: due),
+    );
+  }
+
+  /// Settle one bill across several methods.
+  Future<void> _splitPayment() async {
+    final tenders = await showDialog<List<Tender>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _SplitDialog(
+        total: _grossTotal,
+        methods: _payMethods,
+      ),
+    );
+    if (tenders == null || tenders.isEmpty) return;
+    await _charge(tenders);
   }
 
   /// The chosen and included items under a cart line, indented by depth.
@@ -919,6 +1036,304 @@ class _TillScreenState extends State<TillScreen> {
           Text(formatHalalas(halalas), style: style),
         ],
       ),
+    );
+  }
+}
+
+/// How much cash the customer handed over, and what comes back.
+///
+/// Opens on the exact amount, so the common case is one tap. The quick
+/// buttons are the notes a Saudi customer actually pays with.
+class _CashDialog extends StatefulWidget {
+  const _CashDialog({required this.due});
+
+  final int due;
+
+  @override
+  State<_CashDialog> createState() => _CashDialogState();
+}
+
+class _CashDialogState extends State<_CashDialog> {
+  late final TextEditingController _controller =
+      TextEditingController(text: formatHalalas(widget.due));
+
+  int? get _received => parseHalalas(_controller.text);
+  int? get _change {
+    final received = _received;
+    if (received == null || received < widget.due) return null;
+    return received - widget.due;
+  }
+
+  /// The next notes up from the bill: 50, 100, 200 and the round tens
+  /// between. Only ones that would actually cover it.
+  List<int> get _suggestions {
+    final out = <int>{};
+    for (final note in [1000, 2000, 5000, 10000, 20000, 50000]) {
+      if (note >= widget.due) out.add(note);
+    }
+    // The next whole ten and hundred riyals — what a customer hands over when
+    // they are not paying with a single note.
+    for (final step in [1000, 10000]) {
+      final rounded = ((widget.due + step - 1) ~/ step) * step;
+      if (rounded > widget.due) out.add(rounded);
+    }
+    final list = out.toList()..sort();
+    return list.take(4).toList();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final change = _change;
+    return AlertDialog(
+      title: Text('Cash · ${formatHalalas(widget.due)} due'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Cash received',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) {
+                if (_change != null) Navigator.of(context).pop(_received);
+              },
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final note in _suggestions)
+                  OutlinedButton(
+                    onPressed: () => setState(
+                        () => _controller.text = formatHalalas(note)),
+                    child: Text(formatHalalas(note)),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text(
+              change == null
+                  ? 'Not enough to cover the bill'
+                  : 'Change ${formatHalalas(change)}',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: change == null ? Theme.of(context).colorScheme.error
+                    : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed:
+              change == null ? null : () => Navigator.of(context).pop(_received),
+          child: const Text('Take cash'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Settle one bill across several methods.
+///
+/// The rule the dialog enforces is the one the transaction enforces: the
+/// tenders have to come to the bill exactly. Charging is impossible until
+/// they do, so a half-paid sale cannot be closed by accident.
+class _SplitDialog extends StatefulWidget {
+  const _SplitDialog({required this.total, required this.methods});
+
+  final int total;
+  final List<PayMethod> methods;
+
+  @override
+  State<_SplitDialog> createState() => _SplitDialogState();
+}
+
+class _SplitDialogState extends State<_SplitDialog> {
+  final List<Tender> _taken = [];
+  final _amount = TextEditingController();
+  final _received = TextEditingController();
+  PayMethod? _method;
+
+  int get _settled => _taken.fold(0, (a, t) => a + (t.amount ?? 0));
+  int get _remaining => widget.total - _settled;
+
+  @override
+  void initState() {
+    super.initState();
+    _method = widget.methods.isEmpty ? null : widget.methods.first;
+    _amount.text = formatHalalas(widget.total);
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    _received.dispose();
+    super.dispose();
+  }
+
+  void _add() {
+    final method = _method;
+    final amount = parseHalalas(_amount.text);
+    if (method == null || amount == null || amount <= 0) return;
+    if (amount > _remaining) return;
+
+    final received =
+        method.isCash ? parseHalalas(_received.text) ?? amount : amount;
+    if (received < amount) return;
+
+    setState(() {
+      _taken.add(Tender(
+        methodnum: method.methodnum,
+        name: method.descript,
+        amount: amount,
+        tendered: received,
+        isCash: method.isCash,
+      ));
+      _amount.text = formatHalalas(_remaining);
+      _received.clear();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final change = _taken.fold<int>(
+        0, (a, t) => a + ((t.tendered ?? t.amount!) - t.amount!));
+
+    return AlertDialog(
+      title: const Text('Split payment'),
+      content: SizedBox(
+        width: 460,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Bill ${formatHalalas(widget.total)}'),
+                Text(
+                  'Remaining ${formatHalalas(_remaining)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _remaining == 0 ? scheme.primary : scheme.error,
+                  ),
+                ),
+              ],
+            ),
+            const Divider(),
+            for (var i = 0; i < _taken.length; i++)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text('${_taken[i].name}  '
+                    '${formatHalalas(_taken[i].amount!)}'),
+                trailing: IconButton(
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Take it off',
+                  onPressed: () => setState(() {
+                    _taken.removeAt(i);
+                    _amount.text = formatHalalas(_remaining);
+                  }),
+                ),
+              ),
+            if (_remaining > 0) ...[
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final method in widget.methods)
+                    ChoiceChip(
+                      selected: method.methodnum == _method?.methodnum,
+                      onSelected: (_) => setState(() => _method = method),
+                      label: Text(method.descript),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _amount,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  // Only cash can be over-tendered, so only cash is asked.
+                  if (_method?.isCash ?? false) ...[
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _received,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Cash received',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 8),
+                  FilledButton.tonal(
+                    onPressed: _add,
+                    child: const Text('Add'),
+                  ),
+                ],
+              ),
+            ],
+            if (change > 0) ...[
+              const SizedBox(height: 8),
+              Text('Change ${formatHalalas(change)}',
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          // Not until the bill is covered exactly. A sale that closes short is
+          // money nobody can find at close of day.
+          onPressed: _remaining == 0 && _taken.isNotEmpty
+              ? () => Navigator.of(context).pop(List.of(_taken))
+              : null,
+          child: const Text('Charge'),
+        ),
+      ],
     );
   }
 }

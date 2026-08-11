@@ -106,7 +106,7 @@ class _SetupScreenState extends State<SetupScreen> {
         netTotal: 0,
         taxTotal: 0,
         finalTotal: 0,
-        payMethod: 'None',
+        payments: const [],
         // Deliberately unsigned: a test slip is not a tax document, and the
         // banner says so on the paper.
         zatcaQr: null,

@@ -26,6 +26,23 @@ String formatHalalas(int halalas) {
   return (net: net, tax: gross - net);
 }
 
+/// "12.50" -> 1250, for amounts a cashier types in. Null if it is not one.
+///
+/// Parsed as digits rather than through `double`: 0.1 + 0.2 is the reason
+/// nothing else in this app touches floating point for money, and a tender
+/// that lands a halala out is a drawer that does not balance at close.
+int? parseHalalas(String input) {
+  final text = input.trim().replaceAll(',', '.');
+  if (text.isEmpty) return null;
+  if (!RegExp(r'^\d+(\.\d{0,2})?$').hasMatch(text)) return null;
+
+  final dot = text.indexOf('.');
+  if (dot < 0) return int.parse(text) * 100;
+  final whole = text.substring(0, dot);
+  final fraction = text.substring(dot + 1).padRight(2, '0');
+  return int.parse(whole.isEmpty ? '0' : whole) * 100 + int.parse(fraction);
+}
+
 /// Line total for a quantity at a unit price, in halalas.
 ///
 /// Quantities can be fractional (weighed items), so the rounding happens once,

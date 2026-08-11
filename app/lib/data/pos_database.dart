@@ -87,6 +87,7 @@ class SalesType {
     required this.priceTier,
     required this.isAggregator,
     required this.requiresExternalRef,
+    this.defaultMethodnum,
   });
 
   final int no;
@@ -94,6 +95,11 @@ class SalesType {
   final String priceTier;
   final bool isAggregator;
   final bool requiresExternalRef;
+
+  /// The method this trade is normally settled with, when the catalog says.
+  /// Null throughout this customer's data, so the till falls back to its own
+  /// rule.
+  final int? defaultMethodnum;
 }
 
 /// A prompt a product asks before it can be rung: "1 DRINKS", "Bread
@@ -185,6 +191,77 @@ class CartLine {
   final List<CartExtra> extras;
 }
 
+/// A payment method the till can take, from the synced catalog.
+class PayMethod {
+  PayMethod({
+    required this.methodnum,
+    required this.descript,
+    required this.isCash,
+    required this.opensDrawer,
+  });
+
+  final int methodnum;
+  final String descript;
+
+  /// Cash behaves differently in two ways that matter: it is the only tender
+  /// that can be over-paid and give change, and it opens the drawer.
+  final bool isCash;
+  final bool opensDrawer;
+}
+
+/// One tender against a bill.
+///
+/// A bill can be settled with several: half on a card and the rest in cash is
+/// ordinary at a counter, and a till that can only take one payment forces the
+/// cashier to ring two sales for one customer — which splits the tax invoice,
+/// the order number and the kitchen ticket for no reason.
+class Tender {
+  const Tender({
+    required this.methodnum,
+    required this.name,
+    required int this.amount,
+    this.tendered,
+    this.isCash = false,
+  });
+
+  /// Covers whatever the bill comes to. The one-payment case, where the
+  /// caller cannot know the total before the sale has been priced.
+  const Tender.whole({
+    required this.methodnum,
+    required this.name,
+    this.tendered,
+    this.isCash = false,
+  }) : amount = null;
+
+  final int methodnum;
+
+  /// Snapshot for the receipt: what the customer is told they paid with.
+  final String name;
+
+  /// What this tender settles, in halalas. Null means "the rest of the bill".
+  final int? amount;
+
+  /// What the customer actually handed over. Null means exactly [amount];
+  /// more than that is change, and only cash can do it.
+  final int? tendered;
+  final bool isCash;
+}
+
+/// What one tender came to once the bill was priced.
+class SettledTender {
+  SettledTender({
+    required this.methodnum,
+    required this.name,
+    required this.amount,
+    required this.change,
+  });
+
+  final int methodnum;
+  final String name;
+  final int amount;
+  final int change;
+}
+
 class CompletedSale {
   CompletedSale({
     required this.saleUuid,
@@ -193,6 +270,7 @@ class CompletedSale {
     required this.taxTotal,
     required this.finalTotal,
     required this.kitchenStations,
+    this.payments = const [],
     this.stamp,
   });
 
@@ -204,6 +282,11 @@ class CompletedSale {
 
   /// Station names that received a ticket for this sale.
   final List<String> kitchenStations;
+
+  /// What was actually taken, in the order it was taken. Comes back from the
+  /// transaction rather than from the screen so the receipt prints what was
+  /// recorded.
+  final List<SettledTender> payments;
 
   /// The ZATCA stamp, or null when this device is not provisioned to sign.
   /// Null means the receipt prints the UNSIGNED banner and the backend will
@@ -319,7 +402,7 @@ class PosDatabase {
   List<SalesType> salesTypes() {
     final rows = _db.select(
       'SELECT sale_type_no, descript, price_tier, is_aggregator, '
-      '       requires_external_ref '
+      '       requires_external_ref, default_methodnum '
       'FROM sales_type WHERE is_active = 1 AND is_deleted = 0 '
       'ORDER BY sort_order, sale_type_no',
     );
@@ -331,6 +414,7 @@ class PosDatabase {
           priceTier: r['price_tier'] as String,
           isAggregator: (r['is_aggregator'] as int) != 0,
           requiresExternalRef: (r['requires_external_ref'] as int) != 0,
+          defaultMethodnum: r['default_methodnum'] as int?,
         ),
     ];
   }
@@ -595,6 +679,28 @@ class PosDatabase {
     );
   }
 
+  /// What this till can take money with, in the order the catalog gives.
+  ///
+  /// From the catalog, not a hardcoded list: this customer has six live
+  /// methods and an aggregator one, and a till that offers three of them
+  /// forces the other trade through the wrong button.
+  List<PayMethod> payMethods() {
+    final rows = _db.select(
+      'SELECT methodnum, descript, is_cash, opens_drawer FROM pay_method '
+      'WHERE is_active = 1 AND is_deleted = 0 '
+      'ORDER BY sort_order, methodnum',
+    );
+    return [
+      for (final r in rows)
+        PayMethod(
+          methodnum: r['methodnum'] as int,
+          descript: r['descript'] as String,
+          isCash: (r['is_cash'] as int) != 0,
+          opensDrawer: (r['opens_drawer'] as int) != 0,
+        ),
+    ];
+  }
+
   /// station_no -> name, for routing lines off the PRINTLOC bitmask.
   Map<int, String> kitchenStations() {
     final rows = _db.select(
@@ -617,13 +723,25 @@ class PosDatabase {
   CompletedSale completeSale({
     required List<CartLine> cart,
     required SalesType salesType,
-    required int methodnum,
+    required List<Tender> payments,
     String? externalRef,
     int? orderNo,
     int empnum = 0,
   }) {
     if (cart.isEmpty) {
       throw StateError('an empty cart cannot be charged');
+    }
+    if (payments.isEmpty) {
+      throw StateError('a sale has to be paid for');
+    }
+    // Exactly one tender may say "the rest": two of them have no answer, and
+    // silently splitting the remainder between them would invent a division
+    // nobody asked for.
+    if (payments.where((p) => p.amount == null).length > 1) {
+      throw StateError(
+        'only one tender can cover the rest of the bill; give the others an '
+        'amount',
+      );
     }
     // A sale always has a cashier — emp_open is NOT NULL and a foreign key.
     // Checked here so an unknown one reads as a cashier problem instead of
@@ -754,11 +872,61 @@ class PosDatabase {
         );
       }
 
-      _db.execute(
-        'INSERT INTO sale_payment (payment_uuid, sale_uuid, methodnum, '
-        '  tender, amount, paid_at) VALUES (?, ?, ?, ?, ?, ?)',
-        [_uuid.v4(), saleUuid, methodnum, grossTotal, grossTotal, nowIso],
-      );
+      // Payments, checked against the bill the lines just produced. The till
+      // cannot know the total before this point, which is why a tender is
+      // allowed to say "the rest" rather than carry an amount.
+      final settled = <SettledTender>[];
+      final fixed = payments.fold<int>(0, (a, p) => a + (p.amount ?? 0));
+      final open = payments.where((p) => p.amount == null).length;
+      if (open == 0 && fixed != grossTotal) {
+        throw StateError(
+          'payments come to ${formatHalalas(fixed)} but the bill is '
+          '${formatHalalas(grossTotal)}',
+        );
+      }
+      if (fixed > grossTotal) {
+        throw StateError(
+          'payments come to ${formatHalalas(fixed)}, more than the '
+          '${formatHalalas(grossTotal)} bill — over-payment is change, not a '
+          'bigger tender',
+        );
+      }
+
+      for (final payment in payments) {
+        final amount = payment.amount ?? (grossTotal - fixed);
+        final tendered = payment.tendered ?? amount;
+        final change = tendered - amount;
+        if (amount < 0) {
+          throw StateError('a tender cannot be negative');
+        }
+        if (change < 0) {
+          throw StateError(
+            '${payment.name}: ${formatHalalas(tendered)} handed over does not '
+            'cover the ${formatHalalas(amount)} it is settling',
+          );
+        }
+        if (change > 0 && !payment.isCash) {
+          // A card terminal takes the amount it is given. Change on one is a
+          // typo, and storing it would put money in the drawer that no tender
+          // ever paid in.
+          throw StateError('${payment.name} cannot give change');
+        }
+        _db.execute(
+          'INSERT INTO sale_payment (payment_uuid, sale_uuid, methodnum, '
+          '  tender, change_given, amount, paid_at) '
+          'VALUES (?, ?, ?, ?, ?, ?, ?)',
+          [
+            _uuid.v4(), saleUuid, payment.methodnum, tendered, change,
+            amount, nowIso,
+          ],
+        );
+        settled.add(SettledTender(
+          methodnum: payment.methodnum,
+          name: payment.name,
+          amount: amount,
+          change: change,
+        ));
+      }
 
       // Stamp it as this device's next ZATCA invoice. Inside the transaction
       // by necessity: the stamp and the ICV it consumes have to land together
@@ -798,6 +966,7 @@ class PosDatabase {
         taxTotal: taxTotal,
         finalTotal: grossTotal,
         kitchenStations: stations,
+        payments: settled,
         stamp: stamp,
       );
     } catch (_) {

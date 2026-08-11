@@ -95,7 +95,9 @@ Future<void> main(List<String> args) async {
           product: items.firstWhere((p) => p.prodnum == 2152), qty: 1),
     ],
     salesType: keeta,
-    methodnum: 1010,
+    payments: [
+      Tender.whole(methodnum: 1010, name: 'MADA'),
+    ],
     externalRef: 'KEETA-E2E-1',
     orderNo: 1,
   );
@@ -157,7 +159,9 @@ Future<void> main(List<String> args) async {
       CartLine(product: items.firstWhere((p) => p.prodnum == 2152), qty: 1),
     ],
     salesType: keeta,
-    methodnum: 1010,
+    payments: [
+      Tender.whole(methodnum: 1010, name: 'MADA'),
+    ],
     externalRef: 'KEETA-E2E-2',
     orderNo: 2,
   );

@@ -134,7 +134,9 @@ Future<void> main(List<String> args) async {
     final sale = db.completeSale(
       cart: [CartLine(product: catalogProduct, qty: 1, extras: extras)],
       salesType: salesType,
-      methodnum: 1010,
+      payments: [
+        Tender.whole(methodnum: 1010, name: 'MADA'),
+      ],
       empnum: cashier.empnum,
     );
 

@@ -23,11 +23,35 @@ class ReceiptLine {
     required this.qty,
     required this.name,
     required this.amount,
+    this.depth = 0,
   });
 
   final double qty;
   final String name;
   final int amount; // halalas, VAT-inclusive
+
+  /// How far this line hangs off another: 0 is an item the customer chose
+  /// from the menu, 1 is what they were asked about or what the meal
+  /// includes, and so on. Printed as an indent — a customer checking their
+  /// receipt has to be able to see that the drink came out of the meal rather
+  /// than reading it as a separate item that happened to cost nothing.
+  final int depth;
+}
+
+/// One tender as it goes on the paper.
+class ReceiptTender {
+  const ReceiptTender({
+    required this.name,
+    required this.amount,
+    this.change = 0,
+  });
+
+  final String name;
+  final int amount;
+
+  /// Cash handed back. Printed on its own line — a customer checking the
+  /// paper against their wallet is checking this number.
+  final int change;
 }
 
 class ReceiptData {
@@ -41,7 +65,7 @@ class ReceiptData {
     required this.netTotal,
     required this.taxTotal,
     required this.finalTotal,
-    required this.payMethod,
+    required this.payments,
     this.zatcaQr,
   });
 
@@ -58,7 +82,11 @@ class ReceiptData {
   final int netTotal;
   final int taxTotal;
   final int finalTotal;
-  final String payMethod;
+
+  /// Every tender taken, in the order it was taken. A bill settled half on a
+  /// card and half in cash has to show both, or the customer cannot check it
+  /// against the two receipts their bank and their pocket give them.
+  final List<ReceiptTender> payments;
 
   /// Base64 TLV payload from the signer. Absent until the ZATCA port lands —
   /// and an unsigned receipt says so in print rather than pretending.
@@ -140,9 +168,17 @@ List<int> buildReceipt(ReceiptData r) {
   p.rule();
 
   for (final line in r.lines) {
+    final qty = line.qty.toStringAsFixed(line.qty % 1 == 0 ? 0 : 3);
+    // An included item at a quantity of one needs no "1x": it is one of the
+    // thing above it. Anything else keeps the count, because "2x 1 GARLIC"
+    // and "1 GARLIC" are different orders.
+    final prefix = line.depth > 0 && line.qty == 1 ? '' : '$qty' 'x ';
     p.row(
-      '${line.qty.toStringAsFixed(line.qty % 1 == 0 ? 0 : 3)}x ${line.name}',
-      formatHalalas(line.amount),
+      '${'  ' * line.depth}$prefix${line.name}',
+      // Nothing in the amount column when the meal already covers it. A price
+      // on the paper is a price the customer paid; printing 0.00 down the
+      // side of every meal invites the question at the counter.
+      line.depth > 0 && line.amount == 0 ? '' : formatHalalas(line.amount),
     );
   }
 
@@ -152,9 +188,19 @@ List<int> buildReceipt(ReceiptData r) {
     ..row('VAT 15%', formatHalalas(r.taxTotal))
     ..bold(true)
     ..row('TOTAL', formatHalalas(r.finalTotal))
-    ..bold(false)
-    ..row('Paid', r.payMethod)
-    ..rule();
+    ..bold(false);
+
+  for (final payment in r.payments) {
+    p.row('Paid ${payment.name}', formatHalalas(payment.amount));
+  }
+  final change = r.payments.fold<int>(0, (a, t) => a + t.change);
+  if (change > 0) {
+    p
+      ..bold(true)
+      ..row('CHANGE', formatHalalas(change))
+      ..bold(false);
+  }
+  p.rule();
 
   if (r.zatcaQr != null) {
     p
