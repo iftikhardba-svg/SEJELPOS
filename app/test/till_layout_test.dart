@@ -62,6 +62,33 @@ void main() {
     expect(radius, lessThan(20.0));
   });
 
+  testWidgets('a tile is square, whatever the page it is on', (tester) async {
+    await pumpTill(tester);
+
+    // Stretched-to-fit tiles changed shape with the column count, so the same
+    // item was one size on the shawarma page and another on the grill page —
+    // and staff reach for a shape as much as a position.
+    final tile = tester.getRect(menuTiles().first);
+    expect(tile.width, tile.height);
+  });
+
+  testWidgets('a wide page scrolls sideways instead of overflowing',
+      (tester) async {
+    // Eleven columns on a narrow panel: the tiles hit their floor and the row
+    // is wider than the space. Getting the width a single gap short paints
+    // warning stripes down the middle of the menu on a real screen.
+    for (var col = 1; col <= 11; col++) {
+      db.raw.execute(
+        'INSERT INTO menu_button (id, menu_id, prodnum, position, pos_x, pos_y)'
+        ' VALUES (?, 2010, 2013, ?, ?, 1)',
+        ['wide-$col', col, col],
+      );
+    }
+    await pumpTill(tester, size: const Size(900, 800));
+
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('the tile is big enough to hold its name and price',
       (tester) async {
     await pumpTill(tester);

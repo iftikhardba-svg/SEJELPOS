@@ -621,11 +621,22 @@ class _TillScreenState extends State<TillScreen> {
   /// destroy the thing being carried over: staff reach for a position. If a
   /// page is hidden — because everything on it is a modifier, say — the ones
   /// after it must NOT slide up into its place.
+  /// Every tile is square, and no bigger than this.
+  ///
+  /// Square because a till is reached for by position and shape: the old
+  /// stretched-to-fit rectangles changed size with the number of columns, so
+  /// the same item was a different shape on the shawarma page and the grill
+  /// page. The cap stops a two-tile page from producing enormous buttons; the
+  /// floor keeps an eleven-column page pressable, and the grid scrolls
+  /// sideways rather than shrinking past it.
+  static const _maxTile = 150.0;
+  static const _minTile = 84.0;
+  static const _gap = 8.0;
+
   Widget _positionedGrid<T>({
     required List<T> items,
     required int? Function(T) x,
     required int? Function(T) y,
-    required double tileHeight,
     required Widget Function(T) build,
   }) {
     final placed = <int, Map<int, T>>{};
@@ -643,42 +654,63 @@ class _TillScreenState extends State<TillScreen> {
     // the end rather than being dropped.
     final loose = [for (final i in items) if (x(i) == null || y(i) == null) i];
 
-    return ListView(
-      padding: const EdgeInsets.all(8),
-      children: [
-        for (var row = 1; row <= rows; row++)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            // NOT CrossAxisAlignment.stretch: a Row inside a vertical
-            // ListView has unbounded height, and stretching into that is an
-            // invalid constraint. The SizedBox below sets the height instead.
-            child: Row(
-              children: [
-                for (var col = 1; col <= columns; col++)
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: SizedBox(
-                        height: tileHeight,
-                        child: placed[row]?[col] == null
-                            ? const SizedBox.shrink()
-                            : build(placed[row]![col] as T),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final available = constraints.maxWidth - _gap * 2;
+        final side = (((available - _gap * (columns - 1)) / columns)
+            .clamp(_minTile, _maxTile));
+
+        final grid = ListView(
+          padding: const EdgeInsets.all(_gap),
+          children: [
+            for (var row = 1; row <= rows; row++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: _gap),
+                // NOT CrossAxisAlignment.stretch: a Row inside a vertical
+                // ListView has unbounded height, and stretching into that is
+                // an invalid constraint. The SizedBox below sets the size.
+                child: Row(
+                  children: [
+                    for (var col = 1; col <= columns; col++)
+                      Padding(
+                        padding: const EdgeInsets.only(right: _gap),
+                        child: SizedBox(
+                          width: side,
+                          height: side,
+                          child: placed[row]?[col] == null
+                              ? const SizedBox.shrink()
+                              : build(placed[row]![col] as T),
+                        ),
                       ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        if (loose.isNotEmpty)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final item in loose)
-                SizedBox(width: 170, height: tileHeight, child: build(item)),
-            ],
-          ),
-      ],
+                  ],
+                ),
+              ),
+            if (loose.isNotEmpty)
+              Wrap(
+                spacing: _gap,
+                runSpacing: _gap,
+                children: [
+                  for (final item in loose)
+                    SizedBox(width: side, height: side, child: build(item)),
+                ],
+              ),
+          ],
+        );
+
+        // At the floor the row can be wider than the panel. Scrolling it is
+        // the honest answer: squeezing the tiles further makes them unreadable
+        // and, on a page laid out at eleven columns, unhittable.
+        //
+        // The width is the list's own padding plus every cell and the gap that
+        // follows it: one gap short and the row overflows by exactly that gap,
+        // which the app draws as warning stripes across the menu.
+        final needed = columns * (side + _gap) + _gap * 2;
+        if (needed <= constraints.maxWidth) return grid;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(width: needed, child: grid),
+        );
+      },
     );
   }
 
@@ -687,7 +719,6 @@ class _TillScreenState extends State<TillScreen> {
       items: _tiles,
       x: (t) => t.posX,
       y: (t) => t.posY,
-      tileHeight: 96,
       build: (tile) {
         final back = _colour(tile.backColor);
         final fore = _colour(tile.foreColor) ??
@@ -767,7 +798,6 @@ class _TillScreenState extends State<TillScreen> {
       items: _items,
       x: (p) => p.posX,
       y: (p) => p.posY,
-      tileHeight: 84,
       build: (p) {
         final unit = _unitPrice(p);
         final back = _colour(p.backColor);
