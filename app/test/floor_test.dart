@@ -75,7 +75,11 @@ void main() {
             );
 
         if (path == '/v1/floor') return json(floorFixture());
-        if (path.endsWith('/open')) return json({'id': 'ses-new'});
+        // The endpoint's own shape. A fixture that invented a key the server
+        // never sends is what let a crash on seating a table go unnoticed.
+        if (path.endsWith('/open')) {
+          return json({'session_id': 'ses-new', 'table_no': 11, 'lines': []});
+        }
         if (path.endsWith('/close')) return json({'id': 'ses-new'});
         if (path.endsWith('/lines')) return json({'session_id': 'ses-new'});
         if (path.endsWith('/session')) {
@@ -211,7 +215,9 @@ void main() {
 
     // The session is closed against that bill, and the till is back in the
     // room ready for the next party.
-    expect(calls, contains('POST /v1/sessions/ses-new/close'));
+    // Settled rather than closed: the same call carries a split, and an empty
+    // list of lines means "everything still owed", which frees the table.
+    expect(calls, contains('POST /v1/sessions/ses-new/settle'));
     expect(find.text('11'), findsOneWidget);
     expect(find.text('HUMMOS'), findsNothing);
   });

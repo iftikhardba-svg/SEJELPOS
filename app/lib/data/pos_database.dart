@@ -187,6 +187,8 @@ class CartLine {
     this.note,
     this.extras = const [],
     this.sent = false,
+    this.unitPrice,
+    this.sessionLineNos = const [],
   });
 
   final CatalogProduct product;
@@ -197,6 +199,21 @@ class CartLine {
   /// round goes to the kitchen long before anyone pays, so the bill that
   /// eventually closes must not send the food a second time.
   bool sent;
+
+  /// What this line was quoted at, when it comes off a check that has already
+  /// been presented. Null on a line being rung now, which prices from the
+  /// catalog at the sale type's tier.
+  ///
+  /// A guest is billed the price they were told. Re-pricing a saved check
+  /// through the catalog charges whatever the menu says at payment time, and
+  /// on a meal deal's covered drink — carried at nothing — it charges full
+  /// menu price for something the meal already paid for.
+  final int? unitPrice;
+
+  /// The lines this occupies on the table's saved check: its own and anything
+  /// chosen inside it. Empty until the round has been saved. A split names
+  /// these when it tells the server which guest's bill paid for what.
+  List<int> sessionLineNos;
 
   /// Chosen answers and included combo items, in the order they were asked.
   final List<CartExtra> extras;
@@ -883,11 +900,17 @@ class PosDatabase {
       }
 
       for (final line in cart) {
-        final unit = priceFor(
-          line.product.tiers,
-          salesType.priceTier,
-          prodnum: line.product.prodnum,
-        );
+        // A line off a saved check rings at what the guest was quoted; one
+        // being rung now takes the catalog price at this sale type's tier.
+        // The snapshot has to win, or reopening a table re-prices food that
+        // has already been eaten — and prices a meal's covered drink as if
+        // somebody had ordered it on its own.
+        final unit = line.unitPrice ??
+            priceFor(
+              line.product.tiers,
+              salesType.priceTier,
+              prodnum: line.product.prodnum,
+            );
         final uuid = addRow(product: line.product, qty: line.qty, unit: unit);
         addExtras(line.extras, line.qty, uuid);
       }

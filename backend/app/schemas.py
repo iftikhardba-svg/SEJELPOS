@@ -393,7 +393,14 @@ class TableOut(BaseModel):
     # been pushed together. One number means an ordinary table.
     party_table_nos: list[int] = []
     opened_at: dt.datetime | None = None
-    running_total: int | None = None   # halalas, VAT-inclusive
+    # What is still owed on this table, in halalas — not what it has eaten.
+    # A waiter reading the room is looking for money to collect, and on a
+    # check being split between guests those two numbers stop agreeing.
+    running_total: int | None = None
+    # How much of it has already been taken. Non-zero only on a split check,
+    # where it is the difference between "they are still eating" and "two of
+    # them have paid and left".
+    settled_total: int = 0
 
 
 class ReservationOut(BaseModel):
@@ -429,12 +436,33 @@ class SessionLineIn(BaseModel):
     line_des: str
     qty: float = Field(gt=0)
     unit_price: int = Field(ge=0, description="halalas, VAT-inclusive")
+    # Which line of this same batch it was chosen inside, counted from 1. The
+    # sender cannot know the line numbers the session will give them, so it
+    # names its own position and the server translates.
+    parent_index: int | None = Field(
+        None, ge=1, description="1-based index within this batch of the line "
+                                "this one was chosen inside"
+    )
     seat_no: int | None = None
     note: str | None = None
 
 
 class AddLinesIn(BaseModel):
     lines: list[SessionLineIn] = Field(min_length=1)
+
+
+class SettleIn(BaseModel):
+    """Which lines a bill has just paid for.
+
+    `line_nos` empty means the whole outstanding check, which is the ordinary
+    case: one table, one bill, everybody done.
+    """
+
+    sale_uuid: uuid.UUID
+    line_nos: list[int] = Field(
+        default_factory=list,
+        description="lines this sale paid for; empty means everything still owed",
+    )
 
 
 class TableSessionLineOut(BaseModel):
@@ -445,6 +473,8 @@ class TableSessionLineOut(BaseModel):
     line_des: str
     qty: float
     unit_price: int
+    parent_line_no: int | None = None
+    settled_sale_uuid: uuid.UUID | None = None
     seat_no: int | None = None
     note: str | None = None
     sent_to_kitchen: bool
@@ -466,9 +496,15 @@ class TableSessionDetail(BaseModel):
     closed_at: dt.datetime | None = None
     sale_uuid: uuid.UUID | None = None
     lines: list[TableSessionLineOut] = []
+    # The whole check — what this table has eaten. Unchanged by anyone paying:
+    # a bill that shrinks as it is settled cannot be read back afterwards.
     net_total: int
     tax_total: int
     gross_total: int
+    # What has been paid for and what is still owed. The two are what a waiter
+    # walking back to a half-settled table actually needs.
+    settled_total: int = 0
+    outstanding_total: int = 0
 
 
 class ReservationIn(BaseModel):

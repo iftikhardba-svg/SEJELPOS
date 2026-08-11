@@ -332,7 +332,10 @@ class _FloorScreenState extends State<FloorScreen> {
         id: table.id,
         tableNo: table.tableNo,
         name: table.name,
-        sessionId: session['id'] as String,
+        // `session_id`, which is what the endpoint answers with. Reading `id`
+        // here meant seating a free table threw against a real backend —
+        // caught only once a test used the server's own response shape.
+        sessionId: session['session_id'] as String,
         guests: guests,
       ));
     } on SyncApiException catch (e) {

@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 
 import '../core/money.dart';
 import '../core/pricing.dart';
+import '../data/check_lines.dart';
 import '../data/pos_database.dart';
 import '../printing/escpos.dart';
 import '../printing/printer.dart';
@@ -21,6 +22,7 @@ import '../sync/sync_api.dart';
 import '../sync/sync_worker.dart';
 import 'floor_screen.dart';
 import 'setup_screen.dart';
+import 'split_screen.dart';
 
 class TillScreen extends StatefulWidget {
   const TillScreen({
@@ -158,33 +160,13 @@ class _TillScreenState extends State<TillScreen> {
     } on Exception {
       return; // the floor already said the total; the round is not lost
     }
-    final lines = (session['lines'] as List? ?? const []);
-    if (lines.isEmpty || !mounted) return;
-
-    final restored = <CartLine>[];
-    for (final raw in lines) {
-      final line = (raw as Map).cast<String, dynamic>();
-      if (line['voided'] == true) continue;
-      final product = widget.db.product(line['prodnum'] as int);
-      if (product == null) continue;
-      restored.add(CartLine(
-        product: product,
-        qty: (line['qty'] as num).toDouble(),
-        note: line['note'] as String?,
-        // Already cooked and already on the check: this is what is owed, not
-        // a new round.
-        sent: true,
-      ));
-    }
-    if (restored.isEmpty) return;
+    final restored = restoreCheck(session, widget.db.product);
+    if (restored.isEmpty || !mounted) return;
 
     setState(() {
       _tableCarts[table.id] = restored;
       if (_table?.id == table.id) _cart = restored;
     });
-    // What came back is flat: a session line has nowhere to put what was
-    // chosen inside a meal. The bill is right to the halala; the kitchen
-    // already has the answers from when the round was fired.
     _toast('Picked up ${restored.length} items already on ${table.name}');
   }
 
@@ -193,13 +175,18 @@ class _TillScreenState extends State<TillScreen> {
   /// The normal dine-in move: the food goes to the kitchen now and the money
   /// comes later. Nothing here creates a sale — a bill that exists before
   /// anyone has paid is one that ends up in the day's takings by accident.
-  Future<void> _saveCheck() async {
+  /// [leave] false keeps the waiter on the table — what splitting the check
+  /// needs, because a round that is not on the server has no line numbers for
+  /// a guest's share to name. [quiet] suppresses the confirmation, because a
+  /// snackbar sits exactly where the split screen puts its Charge button and
+  /// would cover it for as long as it shows.
+  Future<void> _saveCheck({bool leave = true, bool quiet = false}) async {
     final table = _table;
     if (table == null || _cart.isEmpty) return;
 
     final unsent = [for (final line in _cart) if (!line.sent) line];
     if (unsent.isEmpty) {
-      _backToFloor();
+      if (leave) _backToFloor();
       return;
     }
 
@@ -220,10 +207,16 @@ class _TillScreenState extends State<TillScreen> {
     // On the server too, so the floor shows the table's total and another
     // tablet can settle it. The kitchen ticket is already written locally and
     // syncs on its own; this failing costs the shared view, not the order.
+    final batch = <Map<String, dynamic>>[];
+    final spans = <CartLine, ({int from, int to})>{};
+    for (final line in unsent) {
+      final from = batch.length;
+      batch.addAll(sessionLinesFor(line, priceOf: _quoted, base: from));
+      spans[line] = (from: from, to: batch.length);
+    }
     try {
-      await widget.api?.addSessionLines(table.sessionId, [
-        for (final line in unsent) ..._sessionLines(line, line.qty),
-      ]);
+      final detail = await widget.api?.addSessionLines(table.sessionId, batch);
+      if (detail != null) assignLineNumbers(detail, spans, batch.length);
     } on Exception {
       if (mounted) {
         _toast('Saved on this till, but the floor could not be updated');
@@ -232,40 +225,13 @@ class _TillScreenState extends State<TillScreen> {
 
     unawaited(widget.worker?.syncNow());
     if (!mounted) return;
-    _toast(stations.isEmpty
-        ? 'Check saved on ${table.name}'
-        : 'Sent to ${stations.join(", ")} · check saved on ${table.name}');
-    _backToFloor();
+    if (!quiet) {
+      _toast(stations.isEmpty
+          ? 'Check saved on ${table.name}'
+          : 'Sent to ${stations.join(", ")} · check saved on ${table.name}');
+    }
+    if (leave) _backToFloor();
   }
-
-  /// A cart line flattened for the session: what it is, how many, what it
-  /// costs. Chosen items come along as their own lines so the total on the
-  /// floor is the total on the bill.
-  List<Map<String, dynamic>> _sessionLines(CartLine line, double qty) {
-    final unit = _unitPrice(line.product) ?? 0;
-    return [
-      {
-        'prodnum': line.product.prodnum,
-        'line_des': line.product.descript,
-        'qty': qty,
-        'unit_price': unit,
-        'note': ?line.note,
-      },
-      for (final extra in line.extras)
-        ..._sessionExtras(extra, extra.qty * qty),
-    ];
-  }
-
-  List<Map<String, dynamic>> _sessionExtras(CartExtra extra, double qty) => [
-        {
-          'prodnum': extra.product.prodnum,
-          'line_des': extra.product.descript,
-          'qty': qty,
-          'unit_price': extra.unitPrice,
-        },
-        for (final child in extra.extras)
-          ..._sessionExtras(child, child.qty * qty),
-      ];
 
   /// Leave the table from the app bar. Anything not yet fired is offered to
   /// the kitchen first — a round left sitting on a tablet is a round nobody
@@ -400,12 +366,8 @@ class _TillScreenState extends State<TillScreen> {
   /// charging one number and printing another.
   int get _grossTotal => _cartTotal(_cart);
 
-  int _cartTotal(List<CartLine> cart) => cart.fold(
-      0,
-      (sum, l) =>
-          sum +
-          lineTotal(_unitPrice(l.product) ?? 0, l.qty) +
-          _extrasTotal(l.extras, l.qty));
+  int _cartTotal(List<CartLine> cart) =>
+      cart.fold(0, (sum, l) => sum + _lineTotal(l));
 
   static int _extrasTotal(List<CartExtra> extras, double parentQty) {
     var total = 0;
@@ -530,8 +492,16 @@ class _TillScreenState extends State<TillScreen> {
     ]);
   }
 
-  Future<void> _charge(List<Tender> tenders) async {
-    if (_cart.isEmpty) return;
+  /// Take money for [lines], or for the whole cart when none are named.
+  ///
+  /// A split names them: each guest's share is its own sale, with its own
+  /// receipt number and its own ZATCA stamp, because each of them is a tax
+  /// invoice in its own right. What is left stays on the table.
+  Future<void> _charge(List<Tender> tenders, {List<CartLine>? lines}) async {
+    // Copied, because settling removes them from the cart and the whole-bill
+    // case is handed the cart itself.
+    final billed = List<CartLine>.of(lines ?? _cart);
+    if (billed.isEmpty) return;
     if (_salesType.requiresExternalRef &&
         _refController.text.trim().isEmpty) {
       _toast('${_salesType.descript} orders need the aggregator order number');
@@ -557,7 +527,7 @@ class _TillScreenState extends State<TillScreen> {
     final CompletedSale sale;
     try {
       sale = widget.db.completeSale(
-        cart: List.of(_cart),
+        cart: billed,
         salesType: _salesType,
         payments: tenders,
         empnum: empnum,
@@ -574,21 +544,36 @@ class _TillScreenState extends State<TillScreen> {
     }
 
     final completedOrder = _orderLabel;
-    final settled = _table;
+    final table = _table;
+    // Which lines of the table's check this bill just paid for. Collected
+    // before the cart is touched, and empty when the whole of what is left is
+    // being settled — the server reads that as "everything still owed".
+    final paidLines = [
+      for (final line in billed) ...line.sessionLineNos,
+    ];
+    final wholeCheck = billed.length == _cart.length;
     setState(() {
-      _cart.clear();
+      _cart.removeWhere(billed.contains);
       _refController.clear();
-      if (settled != null) {
+      if (table != null && _cart.isEmpty) {
         // The bill is paid, so the table is free. Its parked order goes with
         // it — leaving one behind would put the next party's first round on
         // the last party's bill.
-        _tableCarts.remove(settled.id);
-        _myTables.remove(settled.id);
+        _tableCarts.remove(table.id);
+        _myTables.remove(table.id);
         _table = null;
         _cart = [];
       }
     });
-    if (settled != null) unawaited(_releaseTable(settled, sale.saleUuid));
+    final settled = table;
+    if (settled != null) {
+      unawaited(_settleTable(
+        settled,
+        sale.saleUuid,
+        lineNos: wholeCheck ? const [] : paidLines,
+        freed: _table == null,
+      ));
+    }
     // The next customer's number is reserved now, so it is on screen before
     // they have finished ordering.
     unawaited(_takeOrderNumber());
@@ -602,7 +587,10 @@ class _TillScreenState extends State<TillScreen> {
 
     // The cashier picker above may have awaited, so the till could be gone.
     if (!mounted) return;
-    showDialog<void>(
+    // Awaited: a caller settling one guest's share must not act until the
+    // cashier has dismissed this, or it pops the receipt dialog instead of
+    // the screen it meant to close.
+    await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text('Order $completedOrder'),
@@ -645,19 +633,32 @@ class _TillScreenState extends State<TillScreen> {
     );
   }
 
-  /// Tell the floor the table has been settled, and by which bill.
+  /// Tell the floor what this bill paid for, and free the table if that was
+  /// the last of it.
   ///
   /// Off the critical path on purpose: the sale is already recorded, signed
   /// and in the outbox. A floor service that cannot be reached must not stop
   /// the customer leaving — the table shows as occupied until the next reload
   /// says otherwise, which is a nuisance, while a blocked charge is a queue.
-  Future<void> _releaseTable(SeatedTable table, String saleUuid) async {
+  Future<void> _settleTable(
+    SeatedTable table,
+    String saleUuid, {
+    List<int> lineNos = const [],
+    bool freed = true,
+  }) async {
     try {
-      await widget.api?.closeSession(table.sessionId, saleUuid: saleUuid);
+      await widget.api?.settleLines(
+        table.sessionId,
+        saleUuid: saleUuid,
+        lineNos: lineNos,
+      );
     } on Exception {
       if (mounted) {
-        _toast('Table ${table.tableNo} could not be closed on the server — '
-            'the sale is recorded; reload the floor');
+        _toast(freed
+            ? 'Table ${table.tableNo} could not be closed on the server — '
+                'the sale is recorded; reload the floor'
+            : 'Table ${table.tableNo}: this share was taken but the floor '
+                'still shows it owing — the sale is recorded');
       }
     }
   }
@@ -1201,9 +1202,8 @@ class _TillScreenState extends State<TillScreen> {
                           title: Text(line.product.descript,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis),
-                          subtitle: Text(
-                              '${line.qty.toStringAsFixed(0)} × '
-                              '${formatHalalas(_unitPrice(line.product) ?? 0)}'),
+                          subtitle: Text('${line.qty.toStringAsFixed(0)} × '
+                              '${formatHalalas(_quoted(line))}'),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -1320,10 +1320,28 @@ class _TillScreenState extends State<TillScreen> {
                   '${primary.descript}'),
             ),
           ),
-        TextButton.icon(
-          onPressed: ready ? () => unawaited(_splitPayment()) : null,
-          icon: const Icon(Icons.call_split, size: 18),
-          label: const Text('Split payment'),
+        // Wrapped, not a Row: on a cart panel this narrow the two of them do
+        // not fit side by side, and a button that overflows is a button a
+        // waiter cannot press.
+        Wrap(
+          alignment: WrapAlignment.center,
+          children: [
+            TextButton.icon(
+              onPressed: ready ? () => unawaited(_splitPayment()) : null,
+              icon: const Icon(Icons.call_split, size: 18),
+              label: const Text('Split payment'),
+            ),
+            // One bill in several tenders is the button above; this is
+            // several bills, one per guest, each its own tax invoice. Only
+            // offered at a table — a share is made of items somebody ordered,
+            // and counter trade has nobody to divide them between.
+            if (onTable)
+              TextButton.icon(
+                onPressed: ready ? () => unawaited(_splitCheck()) : null,
+                icon: const Icon(Icons.groups_outlined, size: 18),
+                label: const Text('Split the check'),
+              ),
+          ],
         ),
       ],
     );
@@ -1356,6 +1374,120 @@ class _TillScreenState extends State<TillScreen> {
       builder: (context) => _CashDialog(due: due),
     );
   }
+
+  /// Divide the check between the people who ate it.
+  ///
+  /// Each guest's share becomes its own sale — its own receipt number, its own
+  /// ZATCA stamp — because each is a tax invoice in its own right. The table
+  /// stays open until nothing on it is owed.
+  ///
+  /// A share is made of items, never of an amount: an invoice line has to be
+  /// something that was sold. "Put 50 on my card and the rest on his" is a
+  /// payment split and belongs on one invoice — that is what Split payment
+  /// does.
+  Future<void> _splitCheck() async {
+    final table = _table;
+    if (table == null || _cart.isEmpty) return;
+
+    // A share names lines of the saved check, so anything still sitting on
+    // this tablet has to reach the server first. It is going to the kitchen
+    // anyway — nobody splits a bill before the food arrives.
+    if (_cart.any((l) => !l.sent)) {
+      await _saveCheck(leave: false, quiet: true);
+      if (!mounted) return;
+    }
+    if (_cart.any((l) => l.sessionLineNos.isEmpty)) {
+      _toast('This check is not on the floor yet — save it before splitting');
+      return;
+    }
+
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (context) => SplitCheckScreen(
+        tableName: table.name,
+        lines: List.of(_cart),
+        totalOf: _lineTotal,
+        onSplitLine: _divideLine,
+        onCharge: _chargeShare,
+      ),
+    ));
+    if (mounted) setState(() {});
+  }
+
+  /// Break a quantity off a line, on the server, and rebuild the check.
+  ///
+  /// The server owns the line numbers. Dividing locally and guessing what it
+  /// called the halves would settle whichever lines the guess landed on.
+  Future<List<CartLine>?> _divideLine(CartLine line, double qty) async {
+    final table = _table;
+    if (table == null || line.sessionLineNos.isEmpty) return null;
+    try {
+      final detail = await widget.api!
+          .splitLine(table.sessionId, line.sessionLineNos.first, qty);
+      final rebuilt = restoreCheck(detail, widget.db.product);
+      setState(() {
+        _cart = rebuilt;
+        _tableCarts[table.id] = rebuilt;
+      });
+      return rebuilt;
+    } on Exception catch (e) {
+      _toast('$e');
+      return null;
+    }
+  }
+
+  /// Take the money for one guest's share. True once the table is settled.
+  Future<bool> _chargeShare(List<CartLine> share) async {
+    final method = await _pickMethod(_cartTotal(share));
+    if (method == null || !mounted) return false;
+    int? tendered;
+    if (method.isCash) {
+      tendered = await _askCashReceived(_cartTotal(share));
+      if (tendered == null || !mounted) return false;
+    }
+    await _charge(
+      [
+        Tender.whole(
+          methodnum: method.methodnum,
+          name: method.descript,
+          tendered: tendered,
+          isCash: method.isCash,
+        ),
+      ],
+      lines: share,
+    );
+    return _table == null;
+  }
+
+  /// Which method a share is being paid with.
+  Future<PayMethod?> _pickMethod(int due) {
+    return showDialog<PayMethod>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text('Take ${formatHalalas(due)} — how?'),
+        children: [
+          for (final method in _payMethods)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(method),
+              child: Text(method.descript),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// What one item of this line costs: the price it was quoted at if it came
+  /// off a saved check, otherwise the catalog price at this sale type's tier.
+  int _quoted(CartLine line) =>
+      line.unitPrice ?? _unitPrice(line.product) ?? 0;
+
+  /// What one cart line comes to, its chosen items included.
+  int _lineTotal(CartLine line) =>
+      lineTotal(_quoted(line), line.qty) +
+      _extrasTotal(line.extras, line.qty);
 
   /// Settle one bill across several methods.
   Future<void> _splitPayment() async {

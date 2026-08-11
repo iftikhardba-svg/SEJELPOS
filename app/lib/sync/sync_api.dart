@@ -279,6 +279,36 @@ class SyncApi {
     return _decode(r);
   }
 
+  /// Break a quantity off a line of the check so two guests can pay for one
+  /// each. The server owns the line numbers, so it answers with the whole
+  /// check rather than just the piece it made.
+  Future<Map<String, dynamic>> splitLine(
+      String sessionId, int lineNo, double qty) async {
+    final r = await _client.post(
+      _u('/sessions/$sessionId/lines/$lineNo/split?qty=$qty'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
+  /// Record that a bill has paid for part of this check.
+  ///
+  /// [lineNos] empty means everything still owed, which closes the table. A
+  /// split names the lines that guest's invoice covered, and the table stays
+  /// open until the last of them has paid.
+  Future<Map<String, dynamic>> settleLines(
+    String sessionId, {
+    required String saleUuid,
+    List<int> lineNos = const [],
+  }) async {
+    final r = await _client.post(
+      _u('/sessions/$sessionId/settle'),
+      headers: _headers(),
+      body: jsonEncode({'sale_uuid': saleUuid, 'line_nos': lineNos}),
+    );
+    return _decode(r);
+  }
+
   /// Free the table. [saleUuid] ties the session to the bill that settled it,
   /// which is what lets the floor be reconciled against the day's takings.
   Future<Map<String, dynamic>> closeSession(String sessionId,

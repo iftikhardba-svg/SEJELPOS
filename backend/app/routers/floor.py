@@ -39,6 +39,7 @@ from ..schemas import (
     OpenTableIn,
     ReservationIn,
     ReservationOut,
+    SettleIn,
     TableOut,
     TableSessionDetail,
     TableSessionLineOut,
@@ -114,22 +115,31 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
             .all()
         )
 
-        # Open sessions, with their running total, in one pass rather than a
-        # query per table — a 150-table floor would otherwise be 150 round trips.
-        totals = dict(
-            (
-                await session.execute(
-                    select(
-                        TableSessionLine.session_id,
-                        func.sum(
-                            TableSessionLine.unit_price * TableSessionLine.qty
-                        ),
-                    )
-                    .where(TableSessionLine.voided.is_(False))
-                    .group_by(TableSessionLine.session_id)
+        # Open sessions, with what is owed and what has been taken, in one pass
+        # rather than a query per table — a 150-table floor would otherwise be
+        # 150 round trips. Split out by settled/not because a table where two
+        # of the four have paid is neither free nor owing the whole bill.
+        rows = (
+            await session.execute(
+                select(
+                    TableSessionLine.session_id,
+                    TableSessionLine.settled_sale_uuid.is_(None).label("owed"),
+                    func.sum(
+                        TableSessionLine.unit_price * TableSessionLine.qty
+                    ),
                 )
-            ).all()
-        )
+                .where(TableSessionLine.voided.is_(False))
+                .group_by(
+                    TableSessionLine.session_id,
+                    TableSessionLine.settled_sale_uuid.is_(None),
+                )
+            )
+        ).all()
+        totals: dict[uuid.UUID, int] = {}
+        settled_totals: dict[uuid.UUID, int] = {}
+        for session_id, owed, amount in rows:
+            target = totals if owed else settled_totals
+            target[session_id] = target.get(session_id, 0) + int(amount or 0)
 
         open_sessions = list(
             (
@@ -226,6 +236,7 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
                 guests=s.guests if s else None,
                 opened_at=s.opened_at if s else None,
                 running_total=gross if s else None,
+                settled_total=settled_totals.get(s.id, 0) if s else 0,
             )
         )
 
@@ -388,22 +399,36 @@ async def add_lines(
 
         next_no = max((x.line_no for x in ts.lines), default=0) + 1
         now = _now()
-        for item in body.lines:
+        # The sender names a parent by its position in this batch, because it
+        # cannot know what line numbers the session is about to hand out.
+        assigned = {index: next_no + index for index in range(len(body.lines))}
+        for index, item in enumerate(body.lines):
+            parent_no = None
+            if item.parent_index is not None:
+                if item.parent_index > index:
+                    # Forward references would let a line be its own ancestor,
+                    # and the till builds parents before children anyway.
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"line {index + 1} says it was chosen inside line "
+                        f"{item.parent_index}, which comes after it",
+                    )
+                parent_no = assigned[item.parent_index - 1]
             session.add(
                 TableSessionLine(
                     tenant_id=ctx.tenant_id,
                     session_id=ts.id,
-                    line_no=next_no,
+                    line_no=assigned[index],
                     prodnum=item.prodnum,
                     line_des=item.line_des,
                     qty=item.qty,
                     unit_price=item.unit_price,
+                    parent_line_no=parent_no,
                     seat_no=item.seat_no,
                     note=item.note,
                     ordered_at=now,
                 )
             )
-            next_no += 1
 
         await session.flush()
         await session.refresh(ts, ["lines"])
@@ -596,6 +621,267 @@ async def release_joined_table(
                        tables=tables)
 
 
+async def _close(session, ts, sale_uuid: uuid.UUID | None) -> list[DiningTable]:
+    """Settle the session itself and hand its tables back.
+
+    Any tables pushed together for this party go back to being their own
+    tables. Without this a four that sat on two twos leaves one of them
+    occupied by a bill that has already been paid.
+    """
+    now = _now()
+    if ts.sale_uuid is None:
+        ts.sale_uuid = sale_uuid
+    ts.status = BILLED if ts.sale_uuid else ABANDONED
+    ts.closed_at = now
+
+    tables = await _party_tables(session, ts)
+    joined = list(
+        (
+            await session.execute(
+                select(SessionTable).where(
+                    SessionTable.session_id == ts.id,
+                    SessionTable.released_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for merge in joined:
+        merge.released_at = now
+    await session.flush()
+    return tables
+
+
+@router.post("/sessions/{session_id}/lines/{line_no}/split",
+             response_model=TableSessionDetail)
+async def split_line(
+    session_id: uuid.UUID,
+    line_no: int,
+    qty: float = Query(..., gt=0, description="how much moves onto a line of its own"),
+    ctx: DeviceContext = Depends(current_device),
+) -> TableSessionDetail:
+    """Break a quantity off a line so two guests can pay for one each.
+
+    Two of a dish ring as one line of two; splitting the check between the
+    people eating them needs two lines. Nothing about the order changes — the
+    kitchen has already cooked both — so this only divides how the check is
+    written, and each part is then settled by whoever pays for it.
+
+    A line is paid for by exactly one bill. That invariant is why this exists
+    at all: without it the only honest split of a shared line would be a bill
+    for part of a line item, which is not something an invoice can describe.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        ts = await _live_session(session, session_id, ctx.tenant_id)
+
+        by_no = {x.line_no: x for x in ts.lines}
+        line = by_no.get(line_no)
+        if line is None or line.voided:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, f"line {line_no} is not on this check"
+            )
+        if line.settled_sale_uuid is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"line {line_no} has already been paid for",
+            )
+        if line.parent_line_no is not None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"line {line_no} was chosen inside line {line.parent_line_no}; "
+                f"split that instead and this goes with it",
+            )
+        if qty >= float(line.qty):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"line {line_no} is only {float(line.qty)}; splitting {qty} off "
+                f"it would leave nothing behind",
+            )
+
+        children: dict[int, list[TableSessionLine]] = {}
+        for row in ts.lines:
+            if row.parent_line_no is not None and not row.voided:
+                children.setdefault(row.parent_line_no, []).append(row)
+
+        next_no = max(x.line_no for x in ts.lines) + 1
+        share = qty / float(line.qty)
+        now = _now()
+
+        def move(source: TableSessionLine, moved_qty: float,
+                 parent: int | None) -> None:
+            """Copy `moved_qty` of `source` onto a new line, and take it off."""
+            nonlocal next_no
+            mine = next_no
+            next_no += 1
+            session.add(
+                TableSessionLine(
+                    tenant_id=ctx.tenant_id,
+                    session_id=ts.id,
+                    line_no=mine,
+                    prodnum=source.prodnum,
+                    line_des=source.line_des,
+                    qty=moved_qty,
+                    unit_price=source.unit_price,
+                    parent_line_no=parent,
+                    seat_no=source.seat_no,
+                    note=source.note,
+                    # It was cooked with the original. Splitting the check does
+                    # not send anything to the kitchen a second time.
+                    sent_to_kitchen=source.sent_to_kitchen,
+                    ordered_at=source.ordered_at or now,
+                )
+            )
+            source.qty = float(source.qty) - moved_qty
+            # Anything chosen inside it goes proportionally, so the drink that
+            # came with two meals ends up as one drink under each.
+            for child in children.get(source.line_no, []):
+                move(child, float(child.qty) * share, mine)
+
+        move(line, qty, None)
+        await session.flush()
+        await session.refresh(ts, ["lines"])
+
+        tables = await _party_tables(session, ts)
+        return _detail(ts, tables[0], sorted(ts.lines, key=lambda x: x.line_no),
+                       tables=tables)
+
+
+@router.post("/sessions/{session_id}/settle", response_model=TableSessionDetail)
+async def settle_lines(
+    session_id: uuid.UUID,
+    body: SettleIn,
+    ctx: DeviceContext = Depends(current_device),
+) -> TableSessionDetail:
+    """Record that a bill has paid for part of this check.
+
+    Four people eating together and paying separately is not one bill taken in
+    several tenders — each of them gets their own tax invoice, stamped on the
+    device that took their money. So payment is recorded against the lines it
+    covered, and the table stays open until nothing on it is owed.
+
+    An empty `line_nos` settles everything outstanding, which is the ordinary
+    case: one table, one bill.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        ts = (
+            await session.execute(
+                select(TableSession)
+                .options(selectinload(TableSession.lines))
+                .where(
+                    TableSession.id == session_id,
+                    TableSession.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if ts is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such session")
+
+        by_no = {x.line_no: x for x in ts.lines if not x.voided}
+        mine = [
+            x for x in by_no.values() if x.settled_sale_uuid == body.sale_uuid
+        ]
+        if ts.status != OPEN:
+            # The tablet retries this after a dropped connection. If this sale
+            # is what closed the table, saying so again is not an error.
+            if mine or ts.sale_uuid == body.sale_uuid:
+                table = (
+                    await session.execute(
+                        select(DiningTable).where(DiningTable.id == ts.table_id)
+                    )
+                ).scalar_one()
+                return _detail(
+                    ts, table, sorted(ts.lines, key=lambda x: x.line_no)
+                )
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "that table has already been settled"
+            )
+
+        unknown = [n for n in body.line_nos if n not in by_no]
+        if unknown:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                f"lines {sorted(unknown)} are not on this check",
+            )
+
+        if body.line_nos:
+            wanted = set(body.line_nos)
+            # A child always goes with its parent. Half of a meal deal is not
+            # a thing anyone can be billed for, and an invoice carrying the
+            # drink but not the sandwich it came inside does not describe
+            # anything that was sold.
+            children: dict[int, list[int]] = {}
+            for line in by_no.values():
+                if line.parent_line_no is not None:
+                    children.setdefault(line.parent_line_no, []).append(
+                        line.line_no
+                    )
+            queue = list(wanted)
+            while queue:
+                for child in children.get(queue.pop(), []):
+                    if child not in wanted:
+                        wanted.add(child)
+                        queue.append(child)
+            orphans = [
+                n for n in sorted(wanted)
+                if by_no[n].parent_line_no is not None
+                and by_no[n].parent_line_no not in wanted
+                and by_no[by_no[n].parent_line_no].settled_sale_uuid
+                != body.sale_uuid
+            ]
+            if orphans:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"lines {orphans} were chosen inside another item; they "
+                    f"can only be billed with it",
+                )
+            targets = [by_no[n] for n in sorted(wanted)]
+        else:
+            targets = [
+                x for x in sorted(by_no.values(), key=lambda x: x.line_no)
+                if x.settled_sale_uuid is None
+            ]
+
+        taken = [
+            x for x in targets
+            if x.settled_sale_uuid is not None
+            and x.settled_sale_uuid != body.sale_uuid
+        ]
+        if taken:
+            # Two waiters settled overlapping halves of one check. Charging
+            # the same food twice is the one outcome a split must never have,
+            # and the second bill has already been taken on a device — so this
+            # has to be loud enough that somebody refunds it.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"lines {[x.line_no for x in taken]} have already been paid "
+                f"for by another bill",
+            )
+
+        for line in targets:
+            line.settled_sale_uuid = body.sale_uuid
+        # The first bill against this check gets to name the session. On a
+        # split there is no single one — which is exactly why the lines carry
+        # theirs — but leaving it null while guests pay would make an open
+        # table that has already taken money look untouched.
+        if ts.sale_uuid is None:
+            ts.sale_uuid = body.sale_uuid
+        await session.flush()
+
+        outstanding = [
+            x for x in by_no.values() if x.settled_sale_uuid is None
+        ]
+        tables = None
+        if not outstanding:
+            tables = await _close(session, ts, body.sale_uuid)
+        else:
+            await session.refresh(ts, ["lines"])
+            tables = await _party_tables(session, ts)
+
+        return _detail(ts, tables[0], sorted(ts.lines, key=lambda x: x.line_no),
+                       tables=tables)
+
+
 @router.post("/sessions/{session_id}/done-soon", response_model=TableSessionDetail)
 async def mark_done_soon(
     session_id: uuid.UUID,
@@ -674,39 +960,24 @@ async def close_session(
             ).scalar_one()
             return _detail(ts, table, sorted(ts.lines, key=lambda x: x.line_no))
 
-        has_lines = any(not x.voided for x in ts.lines)
-        if sale_uuid is None and has_lines:
+        owed = [
+            x for x in ts.lines
+            if not x.voided and x.settled_sale_uuid is None
+        ]
+        if sale_uuid is None and owed:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 "session has ordered items; closing it needs the sale it was "
                 "billed to, or those items vanish without a bill",
             )
 
-        now = _now()
-        ts.sale_uuid = sale_uuid
-        ts.status = BILLED if sale_uuid else ABANDONED
-        ts.closed_at = now
+        # Whatever is still owed goes onto this bill. A billed session with
+        # unsettled lines on it would read as food nobody paid for, and the
+        # split path would let a second bill claim them.
+        for line in owed:
+            line.settled_sale_uuid = sale_uuid
 
-        # Any tables pushed together for this party go back to being their own
-        # tables. Without this a four that sat on two twos leaves one of them
-        # occupied by a bill that has already been paid.
-        tables = await _party_tables(session, ts)
-        joined = list(
-            (
-                await session.execute(
-                    select(SessionTable).where(
-                        SessionTable.session_id == ts.id,
-                        SessionTable.released_at.is_(None),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for merge in joined:
-            merge.released_at = now
-        await session.flush()
-
+        tables = await _close(session, ts, sale_uuid)
         return _detail(ts, tables[0], sorted(ts.lines, key=lambda x: x.line_no),
                        tables=tables)
 
@@ -828,10 +1099,14 @@ async def create_reservation(
 
 # --------------------------------------------------------------------------
 
+def _line_gross(line) -> int:
+    return int(round(line.unit_price * float(line.qty)))
+
+
 def _detail(ts, table, lines, tables=None) -> TableSessionDetail:
-    gross = sum(
-        int(round(x.unit_price * float(x.qty))) for x in lines if not x.voided
-    )
+    live = [x for x in lines if not x.voided]
+    gross = sum(_line_gross(x) for x in live)
+    settled = sum(_line_gross(x) for x in live if x.settled_sale_uuid is not None)
     net, tax = split_inclusive(gross)
     party = tables or [table]
     return TableSessionDetail(
@@ -850,4 +1125,6 @@ def _detail(ts, table, lines, tables=None) -> TableSessionDetail:
         net_total=net,
         tax_total=tax,
         gross_total=gross,
+        settled_total=settled,
+        outstanding_total=gross - settled,
     )

@@ -650,3 +650,396 @@ async def test_reserved_table_is_flagged_on_the_floor(client, floor):
     r = await client.get("/v1/floor", headers=floor["headers"])
     row = [t for t in r.json()["tables"] if t["id"] == tid][0]
     assert row["status"] == "reserved"
+
+
+# --------------------------------------------------------------------------
+# Splitting a check between guests
+#
+# The rule these exist to keep: separate guests paying separately get separate
+# tax invoices, so payment is recorded per line, and the table is not free
+# until nothing on it is owed.
+# --------------------------------------------------------------------------
+
+
+async def _table_with_a_check(client, floor, table=1, guests=4):
+    """A seated table carrying four lines, one of them a meal with a drink."""
+    tid = str(floor["table_ids"][table])
+    sid = (await client.post(
+        f"/v1/tables/{tid}/open", json={"guests": guests},
+        headers=floor["headers"],
+    )).json()["session_id"]
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines",
+        json={"lines": [
+            {"prodnum": 2177, "line_des": "SHAWA MEAL", "qty": 1,
+             "unit_price": 2200},
+            # Chosen inside the meal, and covered by it.
+            {"prodnum": 900, "line_des": "PEPSI", "qty": 1, "unit_price": 0,
+             "parent_index": 1},
+            {"prodnum": 2013, "line_des": "HUMMOS", "qty": 1,
+             "unit_price": 900},
+            {"prodnum": 2008, "line_des": "SALAD", "qty": 1,
+             "unit_price": 1500},
+        ]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+    return tid, sid, r.json()
+
+
+async def test_a_saved_check_keeps_what_was_chosen_inside_an_item(
+    client, floor
+):
+    """Flattened, the till cannot tell a covered drink from an ordered one."""
+    _, _, body = await _table_with_a_check(client, floor)
+    lines = {ln["line_no"]: ln for ln in body["lines"]}
+    assert lines[2]["parent_line_no"] == 1
+    assert lines[1]["parent_line_no"] is None
+    assert lines[3]["parent_line_no"] is None
+
+
+async def test_a_line_cannot_name_a_parent_that_comes_after_it(client, floor):
+    tid = str(floor["table_ids"][0])
+    sid = (await client.post(
+        f"/v1/tables/{tid}/open", json={"guests": 2}, headers=floor["headers"]
+    )).json()["session_id"]
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines",
+        json={"lines": [
+            {"prodnum": 1, "line_des": "x", "qty": 1, "unit_price": 100,
+             "parent_index": 2},
+            {"prodnum": 2, "line_des": "y", "qty": 1, "unit_price": 100},
+        ]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 400
+    assert "comes after it" in r.text
+
+
+async def test_one_guest_pays_and_the_table_stays_open(client, floor):
+    tid, sid, _ = await _table_with_a_check(client, floor)
+    bill = str(uuid.uuid4())
+
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": bill, "line_nos": [3]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "open"
+    assert body["gross_total"] == 2200 + 900 + 1500
+    assert body["settled_total"] == 900
+    assert body["outstanding_total"] == 2200 + 1500
+
+    # And the floor shows the money still to collect, not what they ate.
+    row = [
+        t for t in (await client.get(
+            "/v1/floor", headers=floor["headers"]
+        )).json()["tables"] if t["id"] == tid
+    ][0]
+    assert row["status"] == "open"
+    assert row["running_total"] == 2200 + 1500
+    assert row["settled_total"] == 900
+
+
+async def test_the_last_guest_to_pay_closes_the_table(client, floor):
+    tid, sid, _ = await _table_with_a_check(client, floor)
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+
+    await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": first, "line_nos": [3, 4]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": second, "line_nos": [1, 2]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "billed"
+    assert body["outstanding_total"] == 0
+    # The session names the bill that opened the settling; the rest are on the
+    # lines, which is the only place a split can honestly record them.
+    assert body["sale_uuid"] == first
+
+    row = [
+        t for t in (await client.get(
+            "/v1/floor", headers=floor["headers"]
+        )).json()["tables"] if t["id"] == tid
+    ][0]
+    assert row["status"] == "free"
+
+
+async def test_a_covered_choice_is_billed_with_the_item_it_came_inside(
+    client, floor
+):
+    """Naming the meal takes its drink with it, without being asked."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [1]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+    settled = {
+        ln["line_no"] for ln in r.json()["lines"]
+        if ln["settled_sale_uuid"] is not None
+    }
+    assert settled == {1, 2}
+
+
+async def test_a_choice_cannot_be_billed_without_its_item(client, floor):
+    """An invoice carrying the drink but not the meal describes no sale."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [2]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 400
+    assert "chosen inside another item" in r.text
+
+
+async def test_two_bills_cannot_claim_the_same_food(client, floor):
+    """The one outcome a split must never have."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [3]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [3, 4]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 409
+    assert "already been paid for" in r.text
+
+
+async def test_settling_the_same_lines_twice_is_a_retry(client, floor):
+    """A dropped connection must not read as a double charge."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    bill = str(uuid.uuid4())
+    body = {"sale_uuid": bill, "line_nos": [3]}
+    first = await client.post(
+        f"/v1/sessions/{sid}/settle", json=body, headers=floor["headers"]
+    )
+    again = await client.post(
+        f"/v1/sessions/{sid}/settle", json=body, headers=floor["headers"]
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["settled_total"] == first.json()["settled_total"]
+
+
+async def test_the_bill_that_closed_a_table_can_say_so_again(client, floor):
+    """The retry arrives after the last guest's payment already closed it."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    bill = str(uuid.uuid4())
+    body = {"sale_uuid": bill, "line_nos": []}
+    await client.post(
+        f"/v1/sessions/{sid}/settle", json=body, headers=floor["headers"]
+    )
+    again = await client.post(
+        f"/v1/sessions/{sid}/settle", json=body, headers=floor["headers"]
+    )
+    assert again.status_code == 200, again.text
+    assert again.json()["status"] == "billed"
+
+
+async def test_another_bill_cannot_settle_a_closed_table(client, floor):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": []},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [1]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 409
+
+
+async def test_settling_no_lines_takes_the_whole_outstanding_check(
+    client, floor
+):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [3]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": []},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["outstanding_total"] == 0
+    assert r.json()["status"] == "billed"
+
+
+async def test_settling_a_line_that_is_not_on_the_check(client, floor):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [99]},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 404
+
+
+async def test_closing_a_whole_table_marks_its_lines_paid(client, floor):
+    """Otherwise a billed session still reads as food nobody paid for."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    bill = str(uuid.uuid4())
+    r = await client.post(
+        f"/v1/sessions/{sid}/close?sale_uuid={bill}", headers=floor["headers"]
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["outstanding_total"] == 0
+    assert all(ln["settled_sale_uuid"] == bill for ln in body["lines"])
+
+
+async def test_a_split_check_frees_both_merged_tables(client, floor):
+    """The party sat on two twos and paid in two halves."""
+    tid, sid, _ = await _table_with_a_check(client, floor, table=0, guests=2)
+    other = str(floor["table_ids"][1])
+    joined = await client.post(
+        f"/v1/sessions/{sid}/tables/{other}", headers=floor["headers"]
+    )
+    assert joined.status_code == 200, joined.text
+
+    await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [1]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": []},
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+
+    tables = (await client.get("/v1/floor", headers=floor["headers"])).json()[
+        "tables"
+    ]
+    statuses = {t["id"]: t["status"] for t in tables}
+    assert statuses[tid] == "free"
+    assert statuses[other] == "free"
+
+
+async def test_two_of_a_dish_become_one_each(client, floor):
+    """The commonest split there is: they shared, they pay separately."""
+    _, sid, _ = await _table_with_a_check(client, floor)
+    await client.post(
+        f"/v1/sessions/{sid}/lines",
+        json={"lines": [
+            {"prodnum": 2013, "line_des": "HUMMOS", "qty": 2,
+             "unit_price": 900},
+        ]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines/5/split?qty=1", headers=floor["headers"]
+    )
+    assert r.status_code == 200, r.text
+    lines = {ln["line_no"]: ln for ln in r.json()["lines"]}
+    assert lines[5]["qty"] == 1
+    assert lines[6]["qty"] == 1
+    assert lines[6]["prodnum"] == 2013
+    # Splitting how the check is written changes nothing about the money.
+    assert r.json()["gross_total"] == 2200 + 900 + 1500 + 1800
+
+
+async def test_splitting_a_meal_takes_its_drink_with_it(client, floor):
+    """Two meals, one drink each — not two drinks under one of them."""
+    tid = str(floor["table_ids"][2])
+    sid = (await client.post(
+        f"/v1/tables/{tid}/open", json={"guests": 2}, headers=floor["headers"]
+    )).json()["session_id"]
+    await client.post(
+        f"/v1/sessions/{sid}/lines",
+        json={"lines": [
+            {"prodnum": 2177, "line_des": "SHAWA MEAL", "qty": 2,
+             "unit_price": 2200},
+            {"prodnum": 900, "line_des": "PEPSI", "qty": 2, "unit_price": 0,
+             "parent_index": 1},
+        ]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines/1/split?qty=1", headers=floor["headers"]
+    )
+    assert r.status_code == 200, r.text
+    lines = {ln["line_no"]: ln for ln in r.json()["lines"]}
+    assert lines[1]["qty"] == 1 and lines[2]["qty"] == 1
+    # The moved meal is line 3, its drink line 4 hanging off it.
+    assert lines[3]["qty"] == 1
+    assert lines[3]["prodnum"] == 2177
+    assert lines[4]["prodnum"] == 900
+    assert lines[4]["parent_line_no"] == 3
+    assert lines[2]["parent_line_no"] == 1
+
+
+async def test_the_two_halves_can_be_paid_by_different_bills(client, floor):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    await client.post(
+        f"/v1/sessions/{sid}/lines",
+        json={"lines": [
+            {"prodnum": 2013, "line_des": "HUMMOS", "qty": 2,
+             "unit_price": 900},
+        ]},
+        headers=floor["headers"],
+    )
+    await client.post(
+        f"/v1/sessions/{sid}/lines/5/split?qty=1", headers=floor["headers"]
+    )
+    first = await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [5]},
+        headers=floor["headers"],
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["settled_total"] == 900
+    assert first.json()["outstanding_total"] == 2200 + 900 + 1500 + 900
+
+
+async def test_a_paid_line_cannot_be_split(client, floor):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    await client.post(
+        f"/v1/sessions/{sid}/settle",
+        json={"sale_uuid": str(uuid.uuid4()), "line_nos": [3]},
+        headers=floor["headers"],
+    )
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines/3/split?qty=0.5", headers=floor["headers"]
+    )
+    assert r.status_code == 409
+
+
+async def test_a_choice_is_split_by_splitting_what_it_came_inside(
+    client, floor
+):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines/2/split?qty=0.5", headers=floor["headers"]
+    )
+    assert r.status_code == 400
+    assert "split that instead" in r.text
+
+
+async def test_splitting_off_the_whole_line_is_refused(client, floor):
+    _, sid, _ = await _table_with_a_check(client, floor)
+    r = await client.post(
+        f"/v1/sessions/{sid}/lines/3/split?qty=1", headers=floor["headers"]
+    )
+    assert r.status_code == 400
+    assert "nothing behind" in r.text

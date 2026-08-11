@@ -1111,7 +1111,17 @@ class TableSessionLine(Base):
     """
 
     __tablename__ = "table_session_line"
-    __table_args__ = (Index("ix_session_line_session", "session_id", "line_no"),)
+    __table_args__ = (
+        Index("ix_session_line_session", "session_id", "line_no"),
+        # What every settle and every running total asks: what on this check
+        # is still owed. Partial, per dialect for the same reason as the open
+        # session index — the tablets run on SQLite.
+        Index(
+            "ix_session_line_unsettled", "session_id",
+            postgresql_where=sa_text("settled_sale_uuid IS NULL"),
+            sqlite_where=sa_text("settled_sale_uuid IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = _uuid_pk()
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
@@ -1123,6 +1133,19 @@ class TableSessionLine(Base):
     line_des: Mapped[str] = mapped_column(Text)
     qty: Mapped[float] = mapped_column(Numeric(12, 3))
     unit_price: Mapped[int] = mapped_column(BigInteger)   # halalas, VAT-inclusive
+    # The line this one was chosen inside, by line_no — the bread on a
+    # sandwich, the drink in a meal. Without it a saved check comes back flat
+    # and the till cannot tell an included item from something ordered on its
+    # own; it would re-price the drink at menu rate on a bill the guest has
+    # already been quoted. Same shape as kitchen_ticket_line.parent_line_no.
+    parent_line_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Which bill paid for this line, once one has. Null while it is still
+    # owed. A check split between guests settles in parts, and each part is
+    # its own sale and its own tax invoice — so payment is recorded per line,
+    # not once on the session.
+    settled_sale_uuid: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, nullable=True
+    )
     seat_no: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     sent_to_kitchen: Mapped[bool] = mapped_column(
