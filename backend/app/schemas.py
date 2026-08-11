@@ -383,7 +383,11 @@ class TableOut(BaseModel):
     is_active: bool
     # 'free' | 'open' | 'reserved'
     status: str
+    # Open and nearly finished. What a host reads the room by: a table about
+    # to leave is worth more to them than one that just sat down.
+    done_soon: bool = False
     session_id: uuid.UUID | None = None
+    opened_by: str | None = None
     guests: int | None = None
     opened_at: dt.datetime | None = None
     running_total: int | None = None   # halalas, VAT-inclusive
@@ -412,6 +416,9 @@ class FloorResponse(BaseModel):
 class OpenTableIn(BaseModel):
     guests: int = Field(ge=1, le=99)
     staff_id: uuid.UUID | None = None
+    # Who seated it, by name. Migrated staff have no account to point a
+    # staff_id at, and "who is here?" is a question about a person.
+    opened_by: str | None = Field(default=None, max_length=64)
 
 
 class SessionLineIn(BaseModel):
@@ -447,6 +454,7 @@ class TableSessionDetail(BaseModel):
     table_id: uuid.UUID
     table_no: int
     status: str
+    done_soon: bool = False
     guests: int
     opened_at: dt.datetime
     closed_at: dt.datetime | None = None

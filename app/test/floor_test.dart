@@ -76,6 +76,24 @@ void main() {
         if (path == '/v1/floor') return json(floorFixture());
         if (path.endsWith('/open')) return json({'id': 'ses-new'});
         if (path.endsWith('/close')) return json({'id': 'ses-new'});
+        if (path.endsWith('/lines')) return json({'session_id': 'ses-new'});
+        if (path.endsWith('/session')) {
+          // Only table 12 has a check saved on it; table 11 was just seated.
+          if (!path.contains('tbl-12')) {
+            return json({'session_id': 'ses-new', 'lines': []});
+          }
+          // What another tablet already saved onto table 12.
+          return json({
+            'session_id': 'ses-12',
+            'lines': [
+              {
+                'id': 'l1', 'line_no': 1, 'prodnum': 2013, 'line_des': 'HUMMOS',
+                'qty': 2.0, 'unit_price': 800, 'sent_to_kitchen': true,
+                'ordered_at': '2026-08-11T10:00:00Z', 'voided': false,
+              },
+            ],
+          });
+        }
         return http.Response('{"detail":"unexpected ${request.url}"}', 404,
             headers: {'content-type': 'application/json'});
       }),
@@ -153,8 +171,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Charge 8.00 · MADA'), findsOneWidget);
 
-    // Back to the room: the round stays on the table rather than being lost.
+    // Back to the room. Leaving with a round nobody is cooking is offered as
+    // a choice rather than done silently.
     await tester.tap(find.text('Table 11 · 4 guests'));
+    await tester.pumpAndSettle();
+    expect(find.text('Send this round first?'), findsOneWidget);
+    await tester.tap(find.text('Leave without sending'));
     await tester.pumpAndSettle();
     expect(find.text('8.00'), findsOneWidget, reason: 'held on table 11');
 
@@ -208,6 +230,41 @@ void main() {
     expect(find.text('Table 12 · 2 guests'), findsOneWidget);
   });
 
+  testWidgets('the counter can be served from the floor, and the till stays '
+      'there', (tester) async {
+    seedDineIn();
+    await pumpTill(tester);
+
+    // Somebody walks up while the waiter is in the room.
+    await tester.tap(find.textContaining('Quick order'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('HUMMOS'), findsOneWidget);
+    // Not a dine-in bill with no table: it is takeaway, and it is reported as
+    // takeaway.
+    expect(find.text('Tables'), findsOneWidget);
+    expect(db.activeSaleType(), 2025,
+        reason: 'the choice is remembered, so the till stays on counter trade');
+
+    // And the way back to the room is one tap.
+    await tester.tap(find.text('Tables'));
+    await tester.pumpAndSettle();
+    expect(find.text('11'), findsOneWidget);
+    expect(db.activeSaleType(), 1003);
+  });
+
+  testWidgets('a till starts where it was left, not where the catalog sorts',
+      (tester) async {
+    seedDineIn();
+    // This device does counter trade; Dine-In sorts first in the strip.
+    db.setActiveSaleType(2025);
+
+    await pumpTill(tester);
+
+    expect(find.text('HUMMOS'), findsOneWidget);
+    expect(calls, isEmpty, reason: 'no floor was fetched for a counter till');
+  });
+
   testWidgets('a floor that cannot be reached says so and offers a retry',
       (tester) async {
     seedDineIn();
@@ -230,6 +287,110 @@ void main() {
 
     expect(find.text('The floor could not be loaded'), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Try again'), findsOneWidget);
+  });
+
+  testWidgets('a round goes to the kitchen and the check stays open',
+      (tester) async {
+    seedDineIn();
+    await pumpTill(tester);
+
+    await tester.tap(find.text('11'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Seat 4'));
+    await tester.pumpAndSettle();
+    // Hummos Lahm routes to the grill and the drive-thru window (PRINTLOC 40).
+    await tester.tap(find.text('Hummos Lahm').first);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Send & save check'));
+    await tester.pumpAndSettle();
+
+    // The food is on its way and the round is on the table's check — with no
+    // sale, because nobody has paid.
+    expect(db.raw.select('SELECT COUNT(*) AS n FROM kitchen_ticket_line')
+        .first['n'], 2, reason: 'one line per station it goes to');
+    expect(db.raw.select('SELECT COUNT(*) AS n FROM sale').first['n'], 0);
+    expect(calls, contains('POST /v1/sessions/ses-new/lines'));
+    // And the waiter is back in the room with the table still occupied.
+    expect(find.text('11'), findsOneWidget);
+
+    // Coming back and settling does not cook it twice.
+    await tester.tap(find.text('11'));
+    await tester.pumpAndSettle();
+    expect(find.text('Charge 24.00 · MADA'), findsOneWidget);
+    await tester.tap(find.textContaining('Charge 24.00'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Next customer'));
+    await tester.pumpAndSettle();
+
+    expect(db.raw.select('SELECT COUNT(*) AS n FROM kitchen_ticket_line')
+        .first['n'], 2, reason: 'the round was already sent');
+    expect(db.raw.select('SELECT COUNT(*) AS n FROM sale').first['n'], 1);
+  });
+
+  testWidgets('a check saved on another tablet is picked up, not lost',
+      (tester) async {
+    seedDineIn();
+    await pumpTill(tester);
+
+    // Table 12 belongs to somebody else and has 45.00 on it.
+    await tester.tap(find.text('12'));
+    await tester.pumpAndSettle();
+
+    // The waiter taking the payment sees the bill, not an empty cart.
+    expect(calls, contains('GET /v1/tables/tbl-12/session'));
+    expect(find.text('Charge 16.00 · MADA'), findsOneWidget);
+    expect(find.textContaining('Picked up 1 items'), findsOneWidget);
+  });
+
+  testWidgets('the room is read by colour, the way the old screen was',
+      (tester) async {
+    seedDineIn();
+    await pumpTill(tester);
+
+    Color colourOf(String tableNo) {
+      final material = tester.widget<Material>(find.ancestor(
+        of: find.text(tableNo),
+        matching: find.byType(Material),
+      ).first);
+      return material.color!;
+    }
+
+    // Blue is free, amber is somebody else's table — the legend staff already
+    // know from the screen this replaces.
+    expect(colourOf('11'), const Color(0xFF2F6FED));
+    expect(colourOf('12'), const Color(0xFFF4B400));
+    expect(find.text('Free'), findsOneWidget);
+    expect(find.text('Done soon'), findsOneWidget);
+
+    // Ours turns red the moment we seat it.
+    await tester.tap(find.text('11'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Seat 4'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Table 11 · 4 guests'));
+    await tester.pumpAndSettle();
+    expect(colourOf('11'), const Color(0xFFD93025));
+  });
+
+  testWidgets('Table info answers a different question on the same floor',
+      (tester) async {
+    seedDineIn();
+    await pumpTill(tester);
+
+    // Money spent: the open table shows its bill, the free one steps back.
+    await tester.tap(find.textContaining('Table info'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Money spent').last);
+    await tester.pumpAndSettle();
+    expect(find.text('45.00'), findsOneWidget);
+
+    // Spend per cover: 45.00 across two covers.
+    await tester.tap(find.textContaining('Table info'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Money / cover').last);
+    await tester.pumpAndSettle();
+    expect(find.text('22.50/c'), findsOneWidget);
   });
 
   test('a table knows what it is called and how full it is', () {

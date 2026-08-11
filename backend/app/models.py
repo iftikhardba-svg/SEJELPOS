@@ -1046,6 +1046,17 @@ class TableSession(Base):
     status: Mapped[str] = mapped_column(
         String(16), default="open", server_default=sa_text("'open'")
     )
+    # Who seated it, by name. The floor's "who is here?" view: a manager
+    # looking at a room needs the person, and staff_id above is a foreign key
+    # a migrated catalog cannot always fill in — those staff arrive without
+    # accounts.
+    opened_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The table is nearly finished — the marker a host works the door from.
+    # Set by whoever is looking after the table and cleared when it closes,
+    # so it is a live hint rather than a state the bill depends on.
+    done_soon: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=FALSE
+    )
     sale_uuid: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
     lines: Mapped[list["TableSessionLine"]] = relationship(

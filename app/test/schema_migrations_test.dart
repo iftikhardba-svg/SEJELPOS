@@ -125,6 +125,17 @@ void main() {
     expect(columns(db, 'kitchen_ticket_line'), contains('parent_line_no'));
   });
 
+  test('the till remembers what it was doing, from version 5', () {
+    final db = openV1();
+    addTearDown(db.dispose);
+
+    migrateTabletSchema(db);
+
+    // Without this a drive-thru till boots into the floor plan every morning,
+    // because Dine-In sorts first in the imported catalog.
+    expect(columns(db, 'device'), contains('active_sale_type'));
+  });
+
   test('an upgraded till forgets its catalog watermark', () {
     final db = openV1();
     addTearDown(db.dispose);

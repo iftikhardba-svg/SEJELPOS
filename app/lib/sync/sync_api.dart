@@ -216,11 +216,11 @@ class SyncApi {
   /// Seat a table. The backend refuses a table that is already open, and says
   /// which session has it.
   Future<Map<String, dynamic>> openTable(String tableId,
-      {required int guests}) async {
+      {required int guests, String? openedBy}) async {
     final r = await _client.post(
       _u('/tables/$tableId/open'),
       headers: _headers(),
-      body: jsonEncode({'guests': guests}),
+      body: jsonEncode({'guests': guests, 'opened_by': ?openedBy}),
     );
     return _decode(r);
   }
@@ -228,6 +228,31 @@ class SyncApi {
   Future<Map<String, dynamic>> tableSession(String tableId) async {
     final r = await _client.get(
       _u('/tables/$tableId/session'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
+  /// Save a round onto the table's check.
+  ///
+  /// The device is the authority for the order it is holding; this is the
+  /// shared copy, so the floor shows the table's running total and any other
+  /// tablet — or the same one after a restart — can settle the bill.
+  Future<Map<String, dynamic>> addSessionLines(
+      String sessionId, List<Map<String, dynamic>> lines) async {
+    final r = await _client.post(
+      _u('/sessions/$sessionId/lines'),
+      headers: _headers(),
+      body: jsonEncode({'lines': lines}),
+    );
+    return _decode(r);
+  }
+
+  /// Flag a table as nearly finished so the floor shows it freeing up.
+  Future<Map<String, dynamic>> markDoneSoon(String sessionId,
+      {bool done = true}) async {
+    final r = await _client.post(
+      _u('/sessions/$sessionId/done-soon?done=$done'),
       headers: _headers(),
     );
     return _decode(r);

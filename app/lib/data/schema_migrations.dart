@@ -26,7 +26,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 /// What `assets/schema.sql` currently creates.
-const int tabletSchemaVersion = 4;
+const int tabletSchemaVersion = 5;
 
 /// version -> the statements that lift a database TO that version.
 const Map<int, List<String>> _steps = {
@@ -143,6 +143,13 @@ const Map<int, List<String>> _steps = {
     // one of them — the till would upgrade and still ask nothing, for good.
     // Re-pulling the whole catalog is free; every apply is an upsert.
     "UPDATE sync_state SET last_version = 0 WHERE table_name = 'catalog'",
+  ],
+  // The till remembers what it was doing. Without this every restart lands on
+  // whichever sale type sorts first — Dine-In in this catalog — so a drive-thru
+  // till booted into the floor plan and a waiter's tablet booted into
+  // drive-thru.
+  5: [
+    'ALTER TABLE device ADD COLUMN active_sale_type INTEGER',
   ],
 };
 

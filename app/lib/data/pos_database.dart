@@ -186,11 +186,17 @@ class CartLine {
     required this.qty,
     this.note,
     this.extras = const [],
+    this.sent = false,
   });
 
   final CatalogProduct product;
   double qty;
   String? note;
+
+  /// Already fired to the kitchen and saved onto the table's check. A dine-in
+  /// round goes to the kitchen long before anyone pays, so the bill that
+  /// eventually closes must not send the food a second time.
+  bool sent;
 
   /// Chosen answers and included combo items, in the order they were asked.
   final List<CartExtra> extras;
@@ -659,6 +665,20 @@ class PosDatabase {
     }
   }
 
+  /// One product by number, or null if this catalog has no such thing.
+  ///
+  /// Used to rebuild a check saved from another device: a session line names
+  /// a product number, and the price and routing have to come from the
+  /// catalog rather than from whatever the other tablet believed.
+  CatalogProduct? product(int prodnum) {
+    final rows = _db.select(
+      'SELECT $_productColumns FROM product p '
+      'WHERE p.prodnum = ? AND p.is_deleted = 0',
+      [prodnum],
+    );
+    return rows.isEmpty ? null : _product(rows.first);
+  }
+
   /// Cashiers who can be put on this till, in the order a human scans a list.
   List<({int empnum, String name})> cashiers() {
     final rows = _db.select(
@@ -682,6 +702,25 @@ class PosDatabase {
     _db.execute(
       'UPDATE device SET active_empnum = ? WHERE id = 1',
       [empnum],
+    );
+  }
+
+  /// The sale type this till was last set to, or null on a new device.
+  ///
+  /// Worth remembering because a sale type decides more than price: a
+  /// table-service one starts the order on the floor and a counter one goes
+  /// straight to the menu. A drive-thru till that boots into the floor plan
+  /// every morning — because Dine-In sorts first — is one nobody trusts.
+  int? activeSaleType() {
+    final rows = _db.select('SELECT active_sale_type FROM device WHERE id = 1');
+    if (rows.isEmpty) return null;
+    return rows.first['active_sale_type'] as int?;
+  }
+
+  void setActiveSaleType(int? saleTypeNo) {
+    _db.execute(
+      'UPDATE device SET active_sale_type = ? WHERE id = 1',
+      [saleTypeNo],
     );
   }
 
@@ -959,6 +998,7 @@ class PosDatabase {
 
       final stations = _cutKitchenTickets(
         saleUuid: saleUuid,
+        tableNo: tableNo,
         cart: cart,
         salesType: salesType,
         orderNo: orderNo,
@@ -988,6 +1028,49 @@ class PosDatabase {
     }
   }
 
+  /// Send a round to the kitchen without billing it — dine-in's normal case.
+  ///
+  /// A table orders, eats, orders again and pays at the end, so the food has
+  /// to leave the till long before any money does. Everything that has not
+  /// been sent yet is fired and marked, and the check stays open on the table
+  /// until somebody asks for it.
+  ///
+  /// No sale, no outbox entry, no ZATCA stamp: none of those exist until the
+  /// bill is closed, and inventing them for a round would put an unpaid,
+  /// unsigned invoice into the day's takings.
+  List<String> sendRound({
+    required List<CartLine> cart,
+    required SalesType salesType,
+    required String sessionUuid,
+    int? tableNo,
+    int? orderNo,
+  }) {
+    final unsent = [for (final line in cart) if (!line.sent) line];
+    if (unsent.isEmpty) return const [];
+
+    final nowIso = DateTime.now().toUtc().toIso8601String();
+    _db.execute('BEGIN IMMEDIATE');
+    try {
+      final stations = _cutKitchenTickets(
+        sessionUuid: sessionUuid,
+        tableNo: tableNo,
+        cart: unsent,
+        salesType: salesType,
+        orderNo: orderNo,
+        externalRef: null,
+        nowIso: nowIso,
+      );
+      _db.execute('COMMIT');
+      for (final line in unsent) {
+        line.sent = true;
+      }
+      return stations;
+    } catch (_) {
+      _db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   /// One ticket per sale; each line lands on every station its PRINTLOC bits
   /// name. Bit 1 (the local receipt printer) is not a kitchen station.
   ///
@@ -1005,7 +1088,9 @@ class PosDatabase {
   ///   part of that item, and the station assembling the meal has to know
   ///   which drink goes in the bag.
   List<String> _cutKitchenTickets({
-    required String saleUuid,
+    String? saleUuid,
+    String? sessionUuid,
+    int? tableNo,
     required List<CartLine> cart,
     required SalesType salesType,
     required int? orderNo,
@@ -1050,19 +1135,24 @@ class PosDatabase {
     }
 
     final groups = [
+      // Only what has not already been made. On a table, earlier rounds went
+      // to the kitchen when they were ordered; sending them again with the
+      // bill would cook the whole meal twice.
       for (final line in cart)
-        build(line.product, line.qty, line.extras, const {}, line.note),
+        if (!line.sent)
+          build(line.product, line.qty, line.extras, const {}, line.note),
     ].where((n) => n.reach.isNotEmpty).toList();
     if (groups.isEmpty) return const [];
 
     final ticketUuid = _uuid.v4();
     _db.execute(
       'INSERT INTO kitchen_ticket (ticket_uuid, order_no, sale_type_no, '
-      '  sale_type_name, external_ref, sale_uuid, status, created_at) '
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      '  sale_type_name, external_ref, sale_uuid, session_uuid, table_no, '
+      '  status, created_at) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       [
         ticketUuid, orderNo, salesType.no, salesType.descript,
-        externalRef, saleUuid, 'open', nowIso,
+        externalRef, saleUuid, sessionUuid, tableNo, 'open', nowIso,
       ],
     );
 

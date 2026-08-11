@@ -96,7 +96,13 @@ class _TillScreenState extends State<TillScreen> {
     _salesTypes = widget.db.salesTypes();
     _payMethods = widget.db.payMethods();
     _screens = widget.db.menuScreens();
-    _salesType = _salesTypes.first;
+    // Where this till left off. A counter till stays on counter trade across
+    // a restart instead of landing on whichever type sorts first.
+    final remembered = widget.db.activeSaleType();
+    _salesType = _salesTypes.firstWhere(
+      (t) => t.no == remembered,
+      orElse: () => _salesTypes.first,
+    );
     _menu = widget.db.defaultMenu();
     final menu = _menu;
     _tiles = menu == null ? const [] : widget.db.menuTiles(menu.menuNo);
@@ -139,6 +145,168 @@ class _TillScreenState extends State<TillScreen> {
       _cart = _tableCarts.putIfAbsent(table.id, () => <CartLine>[]);
       _openPage = _tiles.isEmpty ? _activeMenu : null;
     });
+    // A check saved from another tablet — or from this one before a restart —
+    // lives on the server. Without this the waiter who takes the payment sees
+    // an empty bill for a table that has been eating for an hour.
+    if (_cart.isEmpty) unawaited(_loadSavedCheck(table));
+  }
+
+  Future<void> _loadSavedCheck(SeatedTable table) async {
+    final Map<String, dynamic> session;
+    try {
+      session = await widget.api!.tableSession(table.id);
+    } on Exception {
+      return; // the floor already said the total; the round is not lost
+    }
+    final lines = (session['lines'] as List? ?? const []);
+    if (lines.isEmpty || !mounted) return;
+
+    final restored = <CartLine>[];
+    for (final raw in lines) {
+      final line = (raw as Map).cast<String, dynamic>();
+      if (line['voided'] == true) continue;
+      final product = widget.db.product(line['prodnum'] as int);
+      if (product == null) continue;
+      restored.add(CartLine(
+        product: product,
+        qty: (line['qty'] as num).toDouble(),
+        note: line['note'] as String?,
+        // Already cooked and already on the check: this is what is owed, not
+        // a new round.
+        sent: true,
+      ));
+    }
+    if (restored.isEmpty) return;
+
+    setState(() {
+      _tableCarts[table.id] = restored;
+      if (_table?.id == table.id) _cart = restored;
+    });
+    // What came back is flat: a session line has nowhere to put what was
+    // chosen inside a meal. The bill is right to the halala; the kitchen
+    // already has the answers from when the round was fired.
+    _toast('Picked up ${restored.length} items already on ${table.name}');
+  }
+
+  /// Fire what has been ordered and leave the table open.
+  ///
+  /// The normal dine-in move: the food goes to the kitchen now and the money
+  /// comes later. Nothing here creates a sale — a bill that exists before
+  /// anyone has paid is one that ends up in the day's takings by accident.
+  Future<void> _saveCheck() async {
+    final table = _table;
+    if (table == null || _cart.isEmpty) return;
+
+    final unsent = [for (final line in _cart) if (!line.sent) line];
+    if (unsent.isEmpty) {
+      _backToFloor();
+      return;
+    }
+
+    final List<String> stations;
+    try {
+      stations = widget.db.sendRound(
+        cart: _cart,
+        salesType: _salesType,
+        sessionUuid: table.sessionId,
+        tableNo: table.tableNo,
+        orderNo: _pending?.number,
+      );
+    } on Exception catch (e) {
+      _toast('$e');
+      return;
+    }
+
+    // On the server too, so the floor shows the table's total and another
+    // tablet can settle it. The kitchen ticket is already written locally and
+    // syncs on its own; this failing costs the shared view, not the order.
+    try {
+      await widget.api?.addSessionLines(table.sessionId, [
+        for (final line in unsent) ..._sessionLines(line, line.qty),
+      ]);
+    } on Exception {
+      if (mounted) {
+        _toast('Saved on this till, but the floor could not be updated');
+      }
+    }
+
+    unawaited(widget.worker?.syncNow());
+    if (!mounted) return;
+    _toast(stations.isEmpty
+        ? 'Check saved on ${table.name}'
+        : 'Sent to ${stations.join(", ")} · check saved on ${table.name}');
+    _backToFloor();
+  }
+
+  /// A cart line flattened for the session: what it is, how many, what it
+  /// costs. Chosen items come along as their own lines so the total on the
+  /// floor is the total on the bill.
+  List<Map<String, dynamic>> _sessionLines(CartLine line, double qty) {
+    final unit = _unitPrice(line.product) ?? 0;
+    return [
+      {
+        'prodnum': line.product.prodnum,
+        'line_des': line.product.descript,
+        'qty': qty,
+        'unit_price': unit,
+        'note': ?line.note,
+      },
+      for (final extra in line.extras)
+        ..._sessionExtras(extra, extra.qty * qty),
+    ];
+  }
+
+  List<Map<String, dynamic>> _sessionExtras(CartExtra extra, double qty) => [
+        {
+          'prodnum': extra.product.prodnum,
+          'line_des': extra.product.descript,
+          'qty': qty,
+          'unit_price': extra.unitPrice,
+        },
+        for (final child in extra.extras)
+          ..._sessionExtras(child, child.qty * qty),
+      ];
+
+  /// Leave the table from the app bar. Anything not yet fired is offered to
+  /// the kitchen first — a round left sitting on a tablet is a round nobody
+  /// is cooking.
+  Future<void> _leaveTable() async {
+    final unsent = _cart.where((l) => !l.sent).isNotEmpty;
+    if (!unsent) {
+      _backToFloor();
+      return;
+    }
+
+    final send = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Send this round first?'),
+        content: const Text(
+          'Some items have not gone to the kitchen yet. Sending saves them '
+          'onto the table\'s check.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Leave without sending'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Send & leave'),
+          ),
+        ],
+      ),
+    );
+    if (send == null) return;
+    if (send) {
+      await _saveCheck();
+    } else {
+      _backToFloor();
+    }
   }
 
   /// Park this table's order and go back to the room.
@@ -149,6 +317,33 @@ class _TillScreenState extends State<TillScreen> {
       _table = null;
       _cart = [];
     });
+  }
+
+  /// Change what kind of trade this is, and remember it.
+  void _chooseSaleType(SalesType type) {
+    setState(() => _salesType = type);
+    widget.db.setActiveSaleType(type.no);
+  }
+
+  /// A counter sale taken from the floor: no table, straight to the menu.
+  ///
+  /// The switch is the sale type itself rather than a mode of its own,
+  /// because a bill with nobody sitting at a table is not a dine-in bill —
+  /// it is takeaway, and it should be reported as takeaway.
+  SalesType? get _quickOrderType {
+    for (final type in _salesTypes) {
+      if (!type.needsTable) return type;
+    }
+    return null;
+  }
+
+  /// The way back to table service from a counter order.
+  SalesType? get _tableServiceType {
+    if (widget.api == null) return null;
+    for (final type in _salesTypes) {
+      if (type.needsTable) return type;
+    }
+    return null;
   }
 
   /// '#RRGGBB' from the catalog, or null to leave the theme alone.
@@ -595,7 +790,19 @@ class _TillScreenState extends State<TillScreen> {
               child: ActionChip(
                 avatar: const Icon(Icons.table_restaurant_outlined, size: 18),
                 label: Text('${table.name} · ${table.guests} guests'),
-                onPressed: _backToFloor,
+                onPressed: () => unawaited(_leaveTable()),
+              ),
+            )
+          // On counter trade with table service available: the way back to
+          // the room. Anything already in the cart stays in it — the waiter
+          // is changing what this order is, not throwing it away.
+          else if (_tableServiceType != null && !_salesType.needsTable)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ActionChip(
+                avatar: const Icon(Icons.table_restaurant_outlined, size: 18),
+                label: const Text('Tables'),
+                onPressed: () => _chooseSaleType(_tableServiceType!),
               ),
             ),
           Padding(
@@ -644,6 +851,16 @@ class _TillScreenState extends State<TillScreen> {
                       for (final entry in _tableCarts.entries)
                         entry.key: _cartTotal(entry.value),
                     },
+                    // Somebody at the counter while the waiter is on the
+                    // floor. One tap to serve them, and the till stays on
+                    // counter trade until it is sent back to the room.
+                    onQuickOrder: _quickOrderType == null
+                        ? null
+                        : () => _chooseSaleType(_quickOrderType!),
+                    quickOrderLabel: _quickOrderType?.descript,
+                    openedBy: widget.db.activeCashier() == null
+                        ? null
+                        : _cashierLabel,
                   )
                 : Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -669,7 +886,7 @@ class _TillScreenState extends State<TillScreen> {
               padding: const EdgeInsets.only(right: 8),
               child: ChoiceChip(
                 selected: t.no == _salesType.no,
-                onSelected: (_) => setState(() => _salesType = t),
+                onSelected: (_) => _chooseSaleType(t),
                 label: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1030,8 +1247,15 @@ class _TillScreenState extends State<TillScreen> {
   }
 
   /// The methods, the big one, and the way out to a split bill.
+  ///
+  /// On a table the order of these is deliberately the other way round from a
+  /// counter: most of the time a waiter is sending food and walking away, not
+  /// taking money. Paying is the last thing that happens at a table, and on
+  /// most visits it happens once.
   Widget _payButtons() {
     final primary = _primaryMethod;
+    final onTable = _table != null;
+    final unsent = _cart.where((l) => !l.sent).isNotEmpty;
     final others = [
       for (final m in _payMethods)
         if (m.methodnum != primary?.methodnum) m,
@@ -1040,6 +1264,30 @@ class _TillScreenState extends State<TillScreen> {
 
     return Column(
       children: [
+        // Send the food and leave the table open. The customer pays when they
+        // are ready, which at a table is not now.
+        if (onTable) ...[
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: ready ? () => unawaited(_saveCheck()) : null,
+              icon: const Icon(Icons.save_outlined),
+              label: Text(unsent ? 'Send & save check' : 'Back to the floor'),
+            ),
+          ),
+          const Divider(height: 20),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Settle the bill',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
         Wrap(
           spacing: 8,
           runSpacing: 8,

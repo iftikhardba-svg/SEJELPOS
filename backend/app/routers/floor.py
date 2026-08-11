@@ -179,7 +179,9 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
                 can_reserve=t.can_reserve,
                 is_active=t.is_active,
                 status=(OPEN if s else ("reserved" if t.id in reserved_tables else "free")),
+                done_soon=bool(s and s.done_soon),
                 session_id=s.id if s else None,
+                opened_by=s.opened_by if s else None,
                 guests=s.guests if s else None,
                 opened_at=s.opened_at if s else None,
                 running_total=gross if s else None,
@@ -248,6 +250,7 @@ async def open_table(
             table_id=table_id,
             device_uuid=ctx.device_uuid,
             staff_id=body.staff_id,
+            opened_by=body.opened_by,
             guests=body.guests,
             opened_at=_now(),
             status=OPEN,
@@ -346,6 +349,47 @@ async def add_lines(
         await session.flush()
         await session.refresh(ts, ["lines"])
 
+        table = (
+            await session.execute(
+                select(DiningTable).where(DiningTable.id == ts.table_id)
+            )
+        ).scalar_one()
+        return _detail(ts, table, sorted(ts.lines, key=lambda x: x.line_no))
+
+
+@router.post("/sessions/{session_id}/done-soon", response_model=TableSessionDetail)
+async def mark_done_soon(
+    session_id: uuid.UUID,
+    done: bool = Query(True, description="false takes the marker off again"),
+    ctx: DeviceContext = Depends(current_device),
+) -> TableSessionDetail:
+    """Flag a table as nearly finished, so the floor shows it as freeing up.
+
+    A hint for whoever is working the door, not a state the bill depends on:
+    it changes the colour of a table and nothing else, and it goes away when
+    the session closes.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        ts = (
+            await session.execute(
+                select(TableSession)
+                .options(selectinload(TableSession.lines))
+                .where(
+                    TableSession.id == session_id,
+                    TableSession.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if ts is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such session")
+        if ts.status != OPEN:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "that table has already been settled",
+            )
+
+        ts.done_soon = done
+        await session.flush()
         table = (
             await session.execute(
                 select(DiningTable).where(DiningTable.id == ts.table_id)
@@ -539,6 +583,7 @@ def _detail(ts, table, lines) -> TableSessionDetail:
         table_id=ts.table_id,
         table_no=table.table_no,
         status=ts.status,
+        done_soon=ts.done_soon,
         guests=ts.guests,
         opened_at=ts.opened_at,
         closed_at=ts.closed_at,

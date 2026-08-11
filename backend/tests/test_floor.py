@@ -84,6 +84,61 @@ async def test_open_table_then_it_shows_as_open(client, floor):
     assert opened["guests"] == 3
 
 
+async def test_the_floor_says_who_is_here_and_who_is_nearly_done(client, floor):
+    """The two things a host reads a room by, beyond free and busy."""
+    tid = str(floor["table_ids"][1])
+    opened = await client.post(
+        f"/v1/tables/{tid}/open",
+        json={"guests": 3, "opened_by": "Fatima"},
+        headers=floor["headers"],
+    )
+    assert opened.status_code == 200, opened.text
+    session_id = opened.json()["session_id"]
+
+    r = await client.post(
+        f"/v1/sessions/{session_id}/done-soon", headers=floor["headers"]
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["done_soon"] is True
+
+    table = [
+        t for t in (await client.get(
+            "/v1/floor", headers=floor["headers"])).json()["tables"]
+        if t["id"] == tid
+    ][0]
+    assert table["done_soon"] is True
+    assert table["opened_by"] == "Fatima"
+
+    # And it comes off again — a party that ordered another round is not
+    # leaving after all.
+    await client.post(
+        f"/v1/sessions/{session_id}/done-soon?done=false",
+        headers=floor["headers"],
+    )
+    table = [
+        t for t in (await client.get(
+            "/v1/floor", headers=floor["headers"])).json()["tables"]
+        if t["id"] == tid
+    ][0]
+    assert table["done_soon"] is False
+
+
+async def test_a_settled_table_cannot_be_marked_nearly_done(client, floor):
+    tid = str(floor["table_ids"][0])
+    opened = await client.post(
+        f"/v1/tables/{tid}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    session_id = opened.json()["session_id"]
+    await client.post(
+        f"/v1/sessions/{session_id}/close", headers=floor["headers"]
+    )
+
+    r = await client.post(
+        f"/v1/sessions/{session_id}/done-soon", headers=floor["headers"]
+    )
+    assert r.status_code == 409
+
+
 async def test_cannot_open_a_table_twice(client, floor):
     """Two waiters, one table. The second must be told, not given a second bill."""
     tid = str(floor["table_ids"][0])

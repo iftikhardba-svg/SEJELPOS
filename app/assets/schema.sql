@@ -55,6 +55,11 @@ CREATE TABLE device (
     -- pin_hash, so this identifies the cashier without yet authenticating
     -- them. Until PINs are set, anyone at the till can select anyone.
     active_empnum   INTEGER REFERENCES employee(empnum),
+    -- What this till was last doing. Sale types decide far more than price: a
+    -- table-service type starts the order on the floor plan, a counter one goes
+    -- straight to the menu. Remembered so a drive-thru till does not boot into
+    -- the floor because Dine-In happens to sort first.
+    active_sale_type INTEGER,
     -- ZATCA EGS identity. Only public material and metadata live here.
     --
     -- The private key is NOT in this database and NOT in the Android

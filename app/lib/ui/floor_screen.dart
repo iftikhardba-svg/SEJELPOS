@@ -32,11 +32,13 @@ class FloorTable {
     required this.shape,
     required this.status,
     required this.isActive,
+    this.doneSoon = false,
     this.label,
     this.sessionId,
     this.guests,
     this.openedAt,
     this.runningTotal,
+    this.openedBy,
   });
 
   factory FloorTable.fromJson(Map<String, dynamic> j) => FloorTable(
@@ -52,6 +54,7 @@ class FloorTable {
         shape: (j['shape'] as String?) ?? 'square',
         status: (j['status'] as String?) ?? 'free',
         isActive: (j['is_active'] as bool?) ?? true,
+        doneSoon: (j['done_soon'] as bool?) ?? false,
         label: j['label'] as String?,
         sessionId: j['session_id'] as String?,
         guests: j['guests'] as int?,
@@ -59,6 +62,7 @@ class FloorTable {
             ? null
             : DateTime.tryParse(j['opened_at'] as String),
         runningTotal: j['running_total'] as int?,
+        openedBy: j['opened_by'] as String?,
       );
 
   final String id;
@@ -78,14 +82,37 @@ class FloorTable {
   /// In service. The imported floor carries every table PixelPoint ever had,
   /// and most of this customer's have never taken a bill.
   final bool isActive;
+
+  /// Nearly finished — somebody's judgement, recorded so the door can use it.
+  final bool doneSoon;
   final String? label;
   final String? sessionId;
   final int? guests;
   final DateTime? openedAt;
   final int? runningTotal;
+  final String? openedBy;
 
   String get name => label ?? 'Table $tableNo';
   bool get isOpen => status == 'open';
+}
+
+/// What the floor shows on each table besides its number.
+///
+/// The same set the screen this replaces offers behind its Table Info button,
+/// minus the two nothing can answer yet: time since the last course, and which
+/// course a table is on, both of which need rounds to be sent to the kitchen
+/// through the session rather than held on the device.
+enum TableView {
+  none('Tables'),
+  duration('Duration'),
+  spend('Money spent'),
+  perCover('Money / cover'),
+  perMinute('Money / minute'),
+  server('Who is here?');
+
+  const TableView(this.label);
+
+  final String label;
 }
 
 /// What the till knows about the table it is ringing for.
@@ -112,6 +139,9 @@ class FloorScreen extends StatefulWidget {
     required this.onSeated,
     this.cartTotals = const {},
     this.ours = const {},
+    this.onQuickOrder,
+    this.quickOrderLabel,
+    this.openedBy,
   });
 
   final SyncApi api;
@@ -129,6 +159,17 @@ class FloorScreen extends StatefulWidget {
   /// session on a table we already have, and the backend would refuse it.
   final Map<String, SeatedTable> ours;
 
+  /// Serve somebody who is not sitting down — straight to the menu, no table.
+  /// Null when this catalog has no counter sale type to switch to.
+  final VoidCallback? onQuickOrder;
+
+  /// What that counter trade is called here: 'TakeAway', 'Drive Thru'…
+  final String? quickOrderLabel;
+
+  /// Who is on this till, recorded against any table they seat — that is what
+  /// the floor's "who is here?" view reads.
+  final String? openedBy;
+
   @override
   State<FloorScreen> createState() => _FloorScreenState();
 }
@@ -145,10 +186,61 @@ class _FloorScreenState extends State<FloorScreen> {
   String? _error;
   bool _loading = true;
 
+  /// What each table is showing. Kept while the floor is reloaded so a manager
+  /// watching spend does not have to choose it again every refresh.
+  TableView _view = TableView.none;
+
+  /// Ticks the clock so durations move without the waiter touching anything.
+  Timer? _tick;
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  /// What this table reads as under the current view. Null leaves the tile
+  /// showing only its number and total.
+  String? _kpi(FloorTable table, int held) {
+    if (!table.isOpen && held == 0) return null;
+    final total = (table.runningTotal ?? 0) + held;
+    final opened = table.openedAt;
+    final minutes = opened == null
+        ? null
+        : DateTime.now().toUtc().difference(opened.toUtc()).inMinutes;
+
+    switch (_view) {
+      case TableView.none:
+        return null;
+      case TableView.duration:
+        if (minutes == null) return null;
+        return minutes < 60
+            ? '${minutes}m'
+            : '${minutes ~/ 60}h ${(minutes % 60).toString().padLeft(2, "0")}m';
+      case TableView.spend:
+        return formatHalalas(total);
+      case TableView.perCover:
+        final covers = table.guests ?? 0;
+        if (covers <= 0) return null;
+        return '${formatHalalas(total ~/ covers)}/c';
+      case TableView.perMinute:
+        // Under a minute the rate is meaningless — a table that has just sat
+        // down would read as the best in the room.
+        if (minutes == null || minutes < 1) return null;
+        return '${formatHalalas(total ~/ minutes)}/m';
+      case TableView.server:
+        return table.openedBy;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     unawaited(_load());
+    // A minute is the resolution every one of these views is read at.
+    _tick = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (mounted && _view != TableView.none) setState(() {});
+    });
   }
 
   Future<void> _load() async {
@@ -215,7 +307,11 @@ class _FloorScreenState extends State<FloorScreen> {
     if (guests == null) return;
 
     try {
-      final session = await widget.api.openTable(table.id, guests: guests);
+      final session = await widget.api.openTable(
+        table.id,
+        guests: guests,
+        openedBy: widget.openedBy,
+      );
       if (!mounted) return;
       widget.onSeated(SeatedTable(
         id: table.id,
@@ -233,6 +329,78 @@ class _FloorScreenState extends State<FloorScreen> {
         ..showSnackBar(SnackBar(content: Text(e.detail)));
       unawaited(_load());
     }
+  }
+
+  /// Nearly finished, or not any more.
+  Future<void> _toggleDoneSoon(FloorTable table) async {
+    final session = table.sessionId;
+    if (session == null) return;
+    try {
+      await widget.api.markDoneSoon(session, done: !table.doneSoon);
+    } on SyncApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(e.detail)));
+    }
+    await _load();
+  }
+
+  /// The four states a floor is read by, in the colours staff already know
+  /// from the screen this replaces: blue is free, amber is somebody else's
+  /// table, red is yours, green is about to leave.
+  ///
+  /// Fixed colours rather than theme ones on purpose. A waiter crossing a room
+  /// reads a colour, not a label, and a palette that shifts with the theme
+  /// would make them read the label instead.
+  static const _free = Color(0xFF2F6FED);
+  static const _inUse = Color(0xFFF4B400);
+  static const _yours = Color(0xFFD93025);
+  static const _doneSoon = Color(0xFF1E8E3E);
+  static const _reserved = Color(0xFF7B5BD6);
+
+  static Color _colourFor(FloorTable table,
+      {required bool mine, required bool occupied}) {
+    if (table.doneSoon) return _doneSoon;
+    if (mine) return _yours;
+    if (table.isOpen) return _inUse;
+    if (!occupied && table.status == 'reserved') return _reserved;
+    return _free;
+  }
+
+  /// Black or white, whichever can be read on the tile.
+  static Color _readableOn(Color background) =>
+      background.computeLuminance() > 0.5 ? Colors.black : Colors.white;
+
+  Widget _legend() {
+    Widget swatch(Color colour, String label) => Padding(
+          padding: const EdgeInsets.only(right: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 12,
+                height: 12,
+                decoration: BoxDecoration(
+                  color: colour,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(label, style: const TextStyle(fontSize: 11)),
+            ],
+          ),
+        );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        swatch(_free, 'Free'),
+        swatch(_inUse, 'In use'),
+        swatch(_yours, 'Yours'),
+        swatch(_doneSoon, 'Done soon'),
+      ],
+    );
   }
 
   @override
@@ -290,19 +458,24 @@ class _FloorScreenState extends State<FloorScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Row(
+          // A Wrap, not a Row: the header carries a legend, the sections, the
+          // view picker and the counter button, and on a narrow tablet a Row
+          // paints warning stripes across the top of the floor instead.
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 4,
             children: [
+              // What the colours mean, on the screen rather than in a manual:
+              // the floor is read at a glance by people who never open one.
+              _legend(),
               if (_sections.length > 1)
                 for (final s in _sections)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      selected: s.id == _section,
-                      onSelected: (_) => setState(() => _section = s.id),
-                      label: Text(s.name),
-                    ),
+                  ChoiceChip(
+                    selected: s.id == _section,
+                    onSelected: (_) => setState(() => _section = s.id),
+                    label: Text(s.name),
                   ),
-              const Spacer(),
               Text('${shown.where((t) => t.isOpen).length} of ${shown.length} '
                   'in use'),
               IconButton(
@@ -310,6 +483,41 @@ class _FloorScreenState extends State<FloorScreen> {
                 tooltip: 'Reload the floor',
                 onPressed: _load,
               ),
+              // What the tables show. A manager reads a room by spend and by
+              // how long people have been sitting; a waiter reads it by who
+              // needs them. Same floor, different question.
+              PopupMenuButton<TableView>(
+                tooltip: 'What the tables show',
+                initialValue: _view,
+                onSelected: (v) => setState(() => _view = v),
+                itemBuilder: (context) => [
+                  for (final view in TableView.values)
+                    PopupMenuItem(value: view, child: Text(view.label)),
+                ],
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.info_outline, size: 18),
+                      const SizedBox(width: 4),
+                      Text('Table info · ${_view.label}'),
+                    ],
+                  ),
+                ),
+              ),
+              // Somebody at the counter. One tap and the till is on the menu
+              // with no table, and it stays there until it is sent back to
+              // the room — a waiter's tablet and a counter till want opposite
+              // defaults, and both are right.
+              if (widget.onQuickOrder != null)
+                FilledButton.tonalIcon(
+                  onPressed: widget.onQuickOrder,
+                  icon: const Icon(Icons.bolt, size: 18),
+                  label: Text('Quick order'
+                      '${widget.quickOrderLabel == null ? "" : " · "
+                          "${widget.quickOrderLabel}"}'),
+                ),
             ],
           ),
         ),
@@ -345,18 +553,16 @@ class _FloorScreenState extends State<FloorScreen> {
   Widget _tableTile(FloorTable table, ColorScheme scheme) {
     final held = widget.cartTotals[table.id] ?? 0;
     final total = (table.runningTotal ?? 0) + held;
-    final occupied = table.isOpen || widget.ours.containsKey(table.id);
-
-    final background = occupied
-        ? scheme.primaryContainer
-        : table.status == 'reserved'
-            ? scheme.tertiaryContainer
-            : scheme.surfaceContainerHighest;
-    final foreground = occupied
-        ? scheme.onPrimaryContainer
-        : table.status == 'reserved'
-            ? scheme.onTertiaryContainer
-            : scheme.onSurface;
+    final mine = widget.ours.containsKey(table.id);
+    final occupied = table.isOpen || mine;
+    final kpi = _kpi(table, held);
+    // In a KPI view the free tables step back: the question being asked is
+    // about the tables that are working.
+    final muted = _view != TableView.none && !occupied;
+    final background = muted
+        ? const Color(0xFFBDBDBD)
+        : _colourFor(table, mine: mine, occupied: occupied);
+    final foreground = _readableOn(background);
 
     return Padding(
       padding: const EdgeInsets.all(4),
@@ -366,13 +572,19 @@ class _FloorScreenState extends State<FloorScreen> {
           // The imported shape, so the room on screen looks like the room.
           borderRadius: BorderRadius.circular(table.shape == 'round' ? 999 : 10),
           side: BorderSide(
-            color: occupied ? scheme.primary : scheme.outlineVariant,
+            color: occupied ? scheme.outline : scheme.outlineVariant,
             width: occupied ? 2 : 1,
           ),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => unawaited(_tap(table)),
+          // Held down: the table is nearly finished. A hint for whoever is
+          // working the door, and the only way the floor can show a table
+          // freeing up before the bill is paid.
+          onLongPress: table.isOpen
+              ? () => unawaited(_toggleDoneSoon(table))
+              : null,
           child: Padding(
             padding: const EdgeInsets.all(4),
             // Scaled to fit rather than sized to hope: a two-seat table is a
@@ -391,14 +603,22 @@ class _FloorScreenState extends State<FloorScreen> {
                       color: foreground,
                     ),
                   ),
+                  // Under the number: the answer to whatever the floor is
+                  // being asked, or the party size when it is not being asked
+                  // anything.
                   Text(
-                    occupied
-                        ? '${table.guests ?? widget.ours[table.id]?.guests ?? "?"}'
-                            ' guests'
-                        : '${table.seats} seats',
-                    style: TextStyle(fontSize: 10, color: foreground),
+                    kpi ??
+                        (occupied
+                            ? '${table.guests ?? widget.ours[table.id]?.guests ?? "?"}'
+                                ' guests'
+                            : '${table.seats} seats'),
+                    style: TextStyle(
+                      fontSize: kpi == null ? 10 : 12,
+                      fontWeight: kpi == null ? null : FontWeight.bold,
+                      color: foreground,
+                    ),
                   ),
-                  if (total > 0)
+                  if (total > 0 && _view == TableView.none)
                     Text(
                       formatHalalas(total),
                       style: TextStyle(
