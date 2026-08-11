@@ -217,10 +217,15 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
 }
 
 /* ---- menu grid ---- */
-.menugrid { display: grid; gap: 6px; padding: 16px; min-width: max-content; }
+.menugrid { display: grid; gap: 8px; padding: 16px; min-width: max-content; }
 .cell {
-  min-height: 74px; border: 1px dashed var(--border); border-radius: 8px;
-  background: transparent; color: var(--muted); font: inherit; padding: 6px;
+  /* Square, because the till is: a menu page, a room of tables and the grid
+     a manager arranges them on are the same shape, so what is arranged here
+     is what a cashier sees. `aspect-ratio` rather than a fixed height, so a
+     cell grows with the column and stays square while it does. */
+  aspect-ratio: 1; min-height: 84px; overflow: hidden;
+  border: 1px dashed var(--border); border-radius: 10px;
+  background: transparent; color: var(--muted); font: inherit; padding: 8px;
   display: flex; flex-direction: column; justify-content: space-between;
   align-items: flex-start; text-align: left; gap: 4px;
 }
@@ -229,6 +234,7 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
 .cell.held { outline: 3px solid var(--accent); outline-offset: 2px; }
 .celltext { font-size: 12px; line-height: 1.25; white-space: pre-line; }
 .cellprice { font-size: 11px; opacity: .85; font-variant-numeric: tabular-nums; }
+.cellno { font-size: 22px; font-weight: 700; line-height: 1.1; }
 
 /* A cell showing its picture. The name and price stay ON the button rather
    than beside it — the till draws all three in one tile, and an editor that
@@ -1928,22 +1934,39 @@ async function openArea(area) {
   });
   const addTable = el('button', { className: 'btn small', textContent: 'New table' });
   addTable.addEventListener('click', () => newTable(area, tables));
-  bar.append(nameInput, save, addTable, close);
+  // The imported plan puts tables on PixelPoint's fine canvas — five tables
+  // at x = 0, 5, 10, 20, 25 — which on a one-table-per-square grid is five
+  // squares in twenty-six columns of nothing. This closes the gaps up. An
+  // action somebody asks for, never automatic: it moves furniture.
+  const tidy = el('button', { className: 'btn small ghost',
+    textContent: 'Close up the gaps' });
+  tidy.addEventListener('click', async () => {
+    try {
+      await api('/floor-sections/' + area.id + '/tidy', { method: 'POST' });
+      toast('Tidied — tills show it on their next look at the floor');
+      renderFloor();
+    } catch (ex) { toast(ex.message); }
+  });
+  bar.append(nameInput, save, addTable, tidy, close);
   p.append(bar);
 
   // ---- the plan ----
   // Ten by ten of the same grid the till draws, so what is arranged here is
   // what a waiter sees in the room.
   const byCell = new Map();
-  let across = 10, down = 8;
+  // Just big enough for what is there, plus a row and column of room to place
+  // into — the same rule the menu-layout editor uses for an imported page.
+  let across = 4, down = 3;
   for (const t of live) {
     byCell.set(`${t.pos_x},${t.pos_y}`, t);
-    across = Math.max(across, t.pos_x + 1);
-    down = Math.max(down, t.pos_y + 1);
+    across = Math.max(across, t.pos_x + 2);
+    down = Math.max(down, t.pos_y + 2);
   }
+  across = Math.min(across, 20);
+  down = Math.min(down, 20);
 
   const grid = el('div', { className: 'menugrid' });
-  grid.style.gridTemplateColumns = `repeat(${across}, minmax(72px, 1fr))`;
+  grid.style.gridTemplateColumns = `repeat(${across}, minmax(90px, 1fr))`;
   for (let y = 0; y < down; y++) {
     for (let x = 0; x < across; x++) {
       const t = byCell.get(`${x},${y}`);
@@ -1955,10 +1978,12 @@ async function openArea(area) {
           : `Empty  (${x}, ${y})`,
       });
       if (t) {
+        // The number first and large, the way the till draws it: it is what
+        // a waiter looks for, and the label is often empty.
         cell.append(
-          el('span', { className: 'celltext',
-            textContent: t.label || ('Table ' + t.table_no) }),
-          el('span', { className: 'cellprice', textContent: t.seats + ' seats' }),
+          el('span', { className: 'cellno', textContent: String(t.table_no) }),
+          el('span', { className: 'cellprice',
+            textContent: (t.label ? t.label + ' · ' : '') + t.seats + ' seats' }),
         );
         if (t.in_use) cell.append(
           el('span', { className: 'pill', textContent: 'in use' }));

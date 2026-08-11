@@ -14,6 +14,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'tile_grid.dart';
+
 import '../core/money.dart';
 import '../sync/sync_api.dart';
 
@@ -190,11 +192,6 @@ class FloorScreen extends StatefulWidget {
 }
 
 class _FloorScreenState extends State<FloorScreen> {
-  /// Grid units to pixels. The imported plan pitches tables five units apart
-  /// and makes them two wide, so this is what turns that into something a
-  /// finger can hit: the smallest table lands at 80px.
-  static const _unit = 40.0;
-
   List<FloorTable> _tables = const [];
   List<({String id, String name})> _sections = const [];
   String? _section;
@@ -672,43 +669,22 @@ class _FloorScreenState extends State<FloorScreen> {
       );
     }
 
-    var right = 0.0, bottom = 0.0;
-    for (final t in shown) {
-      right = right < (t.posX + t.width) * _unit
-          ? (t.posX + t.width) * _unit
-          : right;
-      bottom = bottom < (t.posY + t.height) * _unit
-          ? (t.posY + t.height) * _unit
-          : bottom;
-    }
-
+    // The same grid the menu is laid out on. A room and a menu page are the
+    // same gesture - a person reaching for a position - and a waiter who has
+    // learned one should not have to learn the other. It also fixes what the
+    // free-positioned version could not: tables imported at whatever size and
+    // shape PixelPoint recorded drew as circles and oblongs of six different
+    // sizes, which reads as a mess rather than as a room.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header(shown, scheme),
         Expanded(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.vertical,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.all(12),
-              child: SizedBox(
-                width: right + 12,
-                height: bottom + 12,
-                child: Stack(
-                  children: [
-                    for (final table in shown)
-                      Positioned(
-                        left: table.posX * _unit,
-                        top: table.posY * _unit,
-                        width: table.width * _unit,
-                        height: table.height * _unit,
-                        child: _tableTile(table, scheme),
-                      ),
-                  ],
-                ),
-              ),
-            ),
+          child: PositionedTileGrid<FloorTable>(
+            items: shown,
+            x: (t) => t.posX,
+            y: (t) => t.posY,
+            tile: (table) => _tableTile(table, scheme),
           ),
         ),
       ],
@@ -729,70 +705,71 @@ class _FloorScreenState extends State<FloorScreen> {
         : _colourFor(table, mine: mine, occupied: occupied);
     final foreground = _readableOn(background);
 
-    return Padding(
-      padding: const EdgeInsets.all(4),
-      child: Material(
-        color: background,
-        shape: RoundedRectangleBorder(
-          // The imported shape, so the room on screen looks like the room.
-          borderRadius: BorderRadius.circular(table.shape == 'round' ? 999 : 10),
-          side: BorderSide(
-            color: occupied ? scheme.outline : scheme.outlineVariant,
-            width: occupied ? 2 : 1,
-          ),
+    // Square, with the menu tile's corner radius. The imported round and
+    // oblong shapes are still in the data and still describe the furniture;
+    // they are no longer drawn, because a grid of matching squares is what
+    // makes a position learnable.
+    return Material(
+      color: background,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(
+          color: occupied ? scheme.outline : scheme.outlineVariant,
+          width: occupied ? 2 : 1,
         ),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () => unawaited(_tap(table)),
-          // Held down: everything that can be done to a table other than
-          // taking an order on it — mark it as leaving, push it onto another
-          // party, or take it back out of one.
-          onLongPress: () => unawaited(_tableMenu(table)),
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            // Scaled to fit rather than sized to hope: a two-seat table is a
-            // small square, and a tile that overflows paints warning stripes
-            // across the floor plan instead of showing the room.
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    '${table.tableNo}',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: foreground,
-                    ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => unawaited(_tap(table)),
+        // Held down: everything that can be done to a table other than taking
+        // an order on it: mark it as leaving, push it onto another party, or
+        // take it back out of one.
+        onLongPress: () => unawaited(_tableMenu(table)),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // The number first and large, the way a menu tile leads with its
+              // name: it is what a waiter is looking for.
+              Expanded(
+                child: Text(
+                  '${table.tableNo}',
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    color: foreground,
                   ),
-                  // Under the number: the answer to whatever the floor is
-                  // being asked, or the party size when it is not being asked
-                  // anything.
-                  Text(
-                    kpi ??
-                        (occupied
-                            ? '${table.guests ?? widget.ours[table.id]?.guests ?? "?"}'
-                                ' guests'
-                            : '${table.seats} seats'),
-                    style: TextStyle(
-                      fontSize: kpi == null ? 10 : 12,
-                      fontWeight: kpi == null ? null : FontWeight.bold,
-                      color: foreground,
-                    ),
-                  ),
-                  if (total > 0 && _view == TableView.none)
-                    Text(
-                      formatHalalas(total),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: foreground,
-                      ),
-                    ),
-                ],
+                ),
               ),
-            ),
+              // Then the answer to whatever the floor is being asked, or the
+              // party size when it is not being asked anything.
+              Text(
+                kpi ??
+                    (occupied
+                        ? '${table.guests ?? widget.ours[table.id]?.guests ?? "?"}'
+                            ' guests'
+                        : '${table.seats} seats'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: kpi == null ? null : FontWeight.bold,
+                  color: foreground,
+                ),
+              ),
+              if (total > 0 && _view == TableView.none)
+                Text(
+                  formatHalalas(total),
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: foreground,
+                  ),
+                ),
+            ],
           ),
         ),
       ),

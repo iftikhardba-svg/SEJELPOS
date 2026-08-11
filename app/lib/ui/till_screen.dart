@@ -23,6 +23,7 @@ import '../sync/sync_worker.dart';
 import 'floor_screen.dart';
 import 'setup_screen.dart';
 import 'split_screen.dart';
+import 'tile_grid.dart';
 
 class TillScreen extends StatefulWidget {
   const TillScreen({
@@ -952,103 +953,12 @@ class _TillScreenState extends State<TillScreen> {
   /// after it must NOT slide up into its place.
   /// Every tile is square, and no bigger than this.
   ///
-  /// Square because a till is reached for by position and shape: the old
-  /// stretched-to-fit rectangles changed size with the number of columns, so
-  /// the same item was a different shape on the shawarma page and the grill
-  /// page. The cap stops a two-tile page from producing enormous buttons; the
-  /// floor keeps an eleven-column page pressable, and the grid scrolls
-  /// sideways rather than shrinking past it.
-  static const _maxTile = 150.0;
-  static const _minTile = 84.0;
-  static const _gap = 8.0;
-
-  Widget _positionedGrid<T>({
-    required List<T> items,
-    required int? Function(T) x,
-    required int? Function(T) y,
-    required Widget Function(T) build,
-  }) {
-    final placed = <int, Map<int, T>>{};
-    var columns = 1;
-    var rows = 1;
-    for (final item in items) {
-      final ix = x(item), iy = y(item);
-      if (ix == null || iy == null) continue;
-      placed.putIfAbsent(iy, () => {})[ix] = item;
-      if (ix > columns) columns = ix;
-      if (iy > rows) rows = iy;
-    }
-
-    // Anything without coordinates still has to be reachable, so it goes on
-    // the end rather than being dropped.
-    final loose = [for (final i in items) if (x(i) == null || y(i) == null) i];
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final available = constraints.maxWidth - _gap * 2;
-        final side = (((available - _gap * (columns - 1)) / columns)
-            .clamp(_minTile, _maxTile));
-
-        final grid = ListView(
-          padding: const EdgeInsets.all(_gap),
-          children: [
-            for (var row = 1; row <= rows; row++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: _gap),
-                // NOT CrossAxisAlignment.stretch: a Row inside a vertical
-                // ListView has unbounded height, and stretching into that is
-                // an invalid constraint. The SizedBox below sets the size.
-                child: Row(
-                  children: [
-                    for (var col = 1; col <= columns; col++)
-                      Padding(
-                        padding: const EdgeInsets.only(right: _gap),
-                        child: SizedBox(
-                          width: side,
-                          height: side,
-                          child: placed[row]?[col] == null
-                              ? const SizedBox.shrink()
-                              : build(placed[row]![col] as T),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            if (loose.isNotEmpty)
-              Wrap(
-                spacing: _gap,
-                runSpacing: _gap,
-                children: [
-                  for (final item in loose)
-                    SizedBox(width: side, height: side, child: build(item)),
-                ],
-              ),
-          ],
-        );
-
-        // At the floor the row can be wider than the panel. Scrolling it is
-        // the honest answer: squeezing the tiles further makes them unreadable
-        // and, on a page laid out at eleven columns, unhittable.
-        //
-        // The width is the list's own padding plus every cell and the gap that
-        // follows it: one gap short and the row overflows by exactly that gap,
-        // which the app draws as warning stripes across the menu.
-        final needed = columns * (side + _gap) + _gap * 2;
-        if (needed <= constraints.maxWidth) return grid;
-        return SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: SizedBox(width: needed, child: grid),
-        );
-      },
-    );
-  }
-
   Widget _menuGrid(ColorScheme scheme) {
-    return _positionedGrid<MenuTile>(
+    return PositionedTileGrid<MenuTile>(
       items: _tiles,
       x: (t) => t.posX,
       y: (t) => t.posY,
-      build: (tile) {
+      tile: (tile) {
         final back = _colour(tile.backColor);
         final fore = _colour(tile.foreColor) ??
             (back == null ? null : _readableOn(back));
@@ -1123,11 +1033,11 @@ class _TillScreenState extends State<TillScreen> {
   }
 
   Widget _buttonGrid(ColorScheme scheme) {
-    return _positionedGrid<CatalogProduct>(
+    return PositionedTileGrid<CatalogProduct>(
       items: _items,
       x: (p) => p.posX,
       y: (p) => p.posY,
-      build: (p) {
+      tile: (p) {
         final unit = _unitPrice(p);
         final back = _colour(p.backColor);
         final fore = _colour(p.foreColor) ??

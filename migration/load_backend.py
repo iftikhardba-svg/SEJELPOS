@@ -40,6 +40,40 @@ def _bool(value, default=False):
     return default if value is None else bool(value)
 
 
+def _close_the_gaps(tables: list[dict]) -> None:
+    """Put an area's tables on consecutive squares, in place.
+
+    Per area, because two areas are two rooms and their coordinates have
+    nothing to say to each other. The distinct positions are mapped onto
+    0, 1, 2 ... so the order and the arrangement survive and only the empty
+    canvas between them goes.
+
+    Two tables can land on the same square once the gaps close — they were
+    apart on the old canvas. The duplicate moves along the row rather than
+    stacking, because a table hidden underneath another is one nobody can
+    seat.
+    """
+    by_area: dict[object, list[dict]] = {}
+    for table in tables:
+        by_area.setdefault(table.get("section_id"), []).append(table)
+
+    for group in by_area.values():
+        columns = {x: i for i, x in
+                   enumerate(sorted({_int(t.get("pos_x")) for t in group}))}
+        rows = {y: i for i, y in
+                enumerate(sorted({_int(t.get("pos_y")) for t in group}))}
+        taken: set[tuple[int, int]] = set()
+        for table in sorted(group, key=lambda t: (_int(t.get("pos_y")),
+                                                  _int(t.get("pos_x")),
+                                                  _int(t.get("table_no")))):
+            spot = (columns[_int(table.get("pos_x"))],
+                    rows[_int(table.get("pos_y"))])
+            while spot in taken:
+                spot = (spot[0] + 1, spot[1])
+            taken.add(spot)
+            table["pos_x"], table["pos_y"] = spot
+
+
 async def load(data: dict, *, tenant_slug: str, company_name: str,
                branch_name: str, vat_number: str, branch_code: str,
                office_email: str | None = None,
@@ -438,6 +472,15 @@ async def load(data: dict, *, tenant_slug: str, company_name: str,
             # an invented area: a floor plan that quietly moves tables is worse
             # than one missing a few.
             homeless = len(data.get("dining_tables", [])) - len(seatable)
+
+            # PixelPoint drew tables free-standing on a fine canvas, so this
+            # customer's five tables in one area sit at x = 0, 5, 10, 20, 25.
+            # The till and the back office lay them out on the same square
+            # grid the menu uses, one table per square, and on that grid those
+            # five are five squares in twenty-six columns of nothing. Close
+            # the gaps at import: the order and the arrangement survive, and
+            # only the empty canvas between them goes.
+            _close_the_gaps(seatable)
 
             counts["dining_tables"] = await upsert(
                 m.DiningTable, seatable, ["table_no"], {

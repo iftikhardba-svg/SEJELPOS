@@ -11,6 +11,7 @@ import datetime as dt
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app import models as m
 from app.db import SessionLocal
@@ -1043,3 +1044,112 @@ async def test_splitting_off_the_whole_line_is_refused(client, floor):
     )
     assert r.status_code == 400
     assert "nothing behind" in r.text
+
+
+# --------------------------------------------------------------------------
+# Closing up the gaps in a plan
+#
+# PixelPoint drew tables free-standing on a fine canvas: this customer's five
+# tables in one area sit at x = 0, 5, 10, 20, 25. The till and the back office
+# now lay them out on the same square grid the menu uses, one table per
+# square, and on that grid those five are five squares in twenty-six columns
+# of nothing.
+# --------------------------------------------------------------------------
+
+
+async def _spread_out(floor, seeded, positions):
+    """Move the fixture's tables onto a PixelPoint-style canvas."""
+    async with SessionLocal() as s:
+        for table_id, (x, y) in zip(floor["table_ids"], positions):
+            row = await s.get(m.DiningTable, table_id)
+            row.pos_x, row.pos_y = x, y
+        await s.commit()
+
+
+async def test_gaps_close_and_the_arrangement_survives(client, floor, seeded):
+    await _spread_out(floor, seeded, [(0, 0), (5, 0), (20, 4)])
+
+    r = await client.post(
+        f"/v1/office/floor-sections/{floor['section_id']}/tidy",
+        headers={"Authorization": "Bearer " + seeded["a"]["office_token"]},
+    )
+    assert r.status_code == 200, r.text
+    spots = {t["table_no"]: (t["pos_x"], t["pos_y"]) for t in r.json()}
+    # Left stays left, and the one on the far row stays on its own row.
+    assert spots[1] == (0, 0)
+    assert spots[2] == (1, 0)
+    assert spots[3] == (2, 1)
+
+
+async def test_two_tables_landing_on_one_square_are_spread(client, floor, seeded):
+    """They were apart on the old canvas; stacking would hide one."""
+    await _spread_out(floor, seeded, [(0, 0), (0, 0), (7, 0)])
+
+    r = await client.post(
+        f"/v1/office/floor-sections/{floor['section_id']}/tidy",
+        headers={"Authorization": "Bearer " + seeded["a"]["office_token"]},
+    )
+    assert r.status_code == 200, r.text
+    spots = [(t["pos_x"], t["pos_y"]) for t in r.json()]
+    assert len(set(spots)) == len(spots), spots
+
+
+async def test_tidying_an_already_tidy_area_changes_nothing(client, floor, seeded):
+    await _spread_out(floor, seeded, [(0, 0), (1, 0), (2, 0)])
+    headers = {"Authorization": "Bearer " + seeded["a"]["office_token"]}
+
+    before = (await client.get(
+        f"/v1/office/tables?section_id={floor['section_id']}", headers=headers
+    )).json()
+    r = await client.post(
+        f"/v1/office/floor-sections/{floor['section_id']}/tidy", headers=headers
+    )
+    assert r.status_code == 200, r.text
+    after = {t["table_no"]: (t["pos_x"], t["pos_y"]) for t in r.json()}
+    assert after == {t["table_no"]: (t["pos_x"], t["pos_y"]) for t in before}
+
+
+async def test_only_the_tables_that_moved_change_version(client, floor, seeded):
+    """A device pulling a delta should not be sent a whole room because two
+    tables shifted."""
+    await _spread_out(floor, seeded, [(0, 0), (1, 0), (9, 0)])
+    async with SessionLocal() as s:
+        before = {
+            t.table_no: t.server_version
+            for t in (
+                await s.execute(
+                    select(m.DiningTable).where(
+                        m.DiningTable.section_id == floor["section_id"]
+                    )
+                )
+            ).scalars().all()
+        }
+
+    await client.post(
+        f"/v1/office/floor-sections/{floor['section_id']}/tidy",
+        headers={"Authorization": "Bearer " + seeded["a"]["office_token"]},
+    )
+    async with SessionLocal() as s:
+        after = {
+            t.table_no: (t.server_version, t.pos_x)
+            for t in (
+                await s.execute(
+                    select(m.DiningTable).where(
+                        m.DiningTable.section_id == floor["section_id"]
+                    )
+                )
+            ).scalars().all()
+        }
+    # Tables 1 and 2 were already at 0 and 1; only table 3 moved.
+    assert after[1][0] == before[1]
+    assert after[2][0] == before[2]
+    assert after[3][0] > before[3]
+    assert after[3][1] == 2
+
+
+async def test_tidying_another_tenants_area_is_refused(client, floor, seeded):
+    r = await client.post(
+        f"/v1/office/floor-sections/{floor['section_id']}/tidy",
+        headers={"Authorization": "Bearer " + seeded["b"]["office_token"]},
+    )
+    assert r.status_code == 404

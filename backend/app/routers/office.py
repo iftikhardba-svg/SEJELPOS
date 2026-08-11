@@ -2198,3 +2198,101 @@ async def clear_product_image(
             )
             await session.flush()
         return _product_out(product, image=row)
+
+
+@router.post("/floor-sections/{section_id}/tidy",
+             response_model=list[OfficeTableOut])
+async def tidy_floor_section(
+    section_id: uuid.UUID,
+    ctx: OfficeContext = OfficeDep,
+) -> list[OfficeTableOut]:
+    """Close up the empty rows and columns in an area's plan.
+
+    PixelPoint stored table positions on a fine canvas — this customer's five
+    tables in Section 1001 sit at x = 0, 5, 10, 20 and 25 — because it drew
+    them free-standing at whatever size each one was. The till and the back
+    office now lay tables out on the same square grid the menu uses, one table
+    per square, and on that grid those five tables are five squares in
+    twenty-six columns of nothing.
+
+    This maps the distinct positions onto consecutive ones, so the plan keeps
+    the order and the shape a manager arranged and loses only the gaps. It is
+    deliberately an action somebody asks for rather than something that
+    happens on its own: it moves furniture, and a floor plan that rearranges
+    itself is one nobody trusts.
+
+    Retired tables move with the rest — they are still on the plan when the
+    manager shows them.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        area = (
+            await session.execute(
+                select(FloorSection).where(
+                    FloorSection.id == section_id,
+                    FloorSection.tenant_id == ctx.tenant_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if area is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such area")
+
+        tables = list(
+            (
+                await session.execute(
+                    select(DiningTable).where(
+                        DiningTable.tenant_id == ctx.tenant_id,
+                        DiningTable.section_id == section_id,
+                        DiningTable.is_deleted.is_(False),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not tables:
+            return []
+
+        columns = {x: i for i, x in
+                   enumerate(sorted({t.pos_x or 0 for t in tables}))}
+        rows = {y: i for i, y in
+                enumerate(sorted({t.pos_y or 0 for t in tables}))}
+
+        moved = 0
+        version = await _next_catalog_version(session, ctx.tenant_id)
+        for table in tables:
+            nx, ny = columns[table.pos_x or 0], rows[table.pos_y or 0]
+            if (table.pos_x, table.pos_y) == (nx, ny):
+                continue
+            table.pos_x, table.pos_y = nx, ny
+            # Only what moved changes version: a device pulling a delta should
+            # not be sent the whole room because two tables shifted.
+            table.server_version = version
+            moved += 1
+        await session.flush()
+
+        # Two tables can share a position once the gaps close — they were
+        # apart on the old canvas and land on the same square now. Spread the
+        # duplicates along the row rather than stacking them, because a table
+        # hidden underneath another is one nobody can seat.
+        taken: set[tuple[int, int]] = set()
+        for table in sorted(tables, key=lambda t: (t.pos_y or 0, t.pos_x or 0,
+                                                   t.table_no)):
+            spot = (table.pos_x or 0, table.pos_y or 0)
+            while spot in taken:
+                spot = (spot[0] + 1, spot[1])
+            if spot != (table.pos_x, table.pos_y):
+                table.pos_x, table.pos_y = spot
+                table.server_version = version
+                moved += 1
+            taken.add(spot)
+        await session.flush()
+
+        rows_out = sorted(tables, key=lambda t: (t.pos_y or 0, t.pos_x or 0))
+        busy = await _tables_in_use(session, ctx.tenant_id)
+
+    return [
+        OfficeTableOut.model_validate(t).model_copy(
+            update={"in_use": t.id in busy}
+        )
+        for t in rows_out
+    ]
