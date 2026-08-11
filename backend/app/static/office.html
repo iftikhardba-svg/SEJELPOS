@@ -239,6 +239,11 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
   border-radius: var(--radius); padding: 20px; width: min(520px, 100%);
 }
 .modal h2 { margin: 0 0 12px; font-size: 16px; }
+.field { display: grid; gap: 4px; margin-bottom: 12px; }
+.field label { font-size: 12px; color: var(--muted); }
+.field .hint { font-size: 11px; color: var(--muted); }
+.modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
+.modal .err { margin: 0 0 8px; }
 
 #toast {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
@@ -1036,18 +1041,37 @@ function pageList(screens) {
 }
 
 async function newPage() {
-  const name = prompt('Name for the new page');
-  if (!name || !name.trim()) return;
-  const menuId = Number(prompt('Page number (used by tills and imports)'));
-  if (!Number.isInteger(menuId) || menuId < 1) return toast('Page number must be a whole number');
-  try {
-    const made = await api('/menu-screens', { method: 'POST',
-      body: JSON.stringify({ menu_id: menuId, name: name.trim(),
-                             buttons_across: 6, buttons_down: 5 }) });
-    selectedScreenId = made.id;
-    toast('Page created');
-    renderMenu();
-  } catch (ex) { toast(ex.message); }
+  let made = null;
+  const done = await formModal({
+    title: 'New order page',
+    confirm: 'Create page',
+    fields: [
+      { name: 'name', label: 'Name', placeholder: 'Shawarma, Grill, Drinks…' },
+      { name: 'menu_id', label: 'Page number', type: 'number', min: 1,
+        hint: 'What tills and imports refer to it by.' },
+      { name: 'across', label: 'Columns', type: 'number', value: 6, min: 1, max: 20 },
+      { name: 'down', label: 'Rows', type: 'number', value: 5, min: 1, max: 20 },
+    ],
+    submit: async v => {
+      if (!v.name) return 'Give the page a name.';
+      const menuId = Number(v.menu_id);
+      if (!Number.isInteger(menuId) || menuId < 1) {
+        return 'Page numbers are whole numbers from 1.';
+      }
+      try {
+        made = await api('/menu-screens', { method: 'POST',
+          body: JSON.stringify({
+            menu_id: menuId, name: v.name,
+            buttons_across: Number(v.across) || 6,
+            buttons_down: Number(v.down) || 5 }) });
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!done || !made) return;
+  selectedScreenId = made.id;
+  toast('Page created');
+  renderMenu();
 }
 
 async function openPage(screen) {
@@ -1300,6 +1324,89 @@ async function onMenuCell(menu, page, x, y, screens) {
   } catch (ex) { toast(ex.message); }
 }
 
+/// A small form in a modal, instead of a chain of prompt() boxes.
+///
+/// prompt() cannot label a field, cannot show what a value is for, cannot
+/// offer a choice, and cannot be cancelled halfway without losing what was
+/// already typed. Setting up a floor is several fields at once, and half of
+/// them are choices.
+///
+/// Resolves with an object of values, or null if it was cancelled. `submit`
+/// may return an error string to keep the form open and say what is wrong.
+function formModal({ title, fields, confirm = 'Save', submit }) {
+  return new Promise(resolve => {
+    const back = el('div', { className: 'modal-back' });
+    const box = el('div', { className: 'modal' });
+    const error = el('p', { className: 'err hidden' });
+    const inputs = {};
+
+    const close = value => {
+      document.removeEventListener('keydown', onKey);
+      back.remove();
+      resolve(value);
+    };
+    const onKey = e => { if (e.key === 'Escape') close(null); };
+    document.addEventListener('keydown', onKey);
+
+    box.append(el('h2', { textContent: title }), error);
+
+    for (const f of fields) {
+      const wrap = el('div', { className: 'field' });
+      wrap.append(el('label', { textContent: f.label, htmlFor: 'f-' + f.name }));
+      let input;
+      if (f.type === 'select') {
+        input = el('select', { id: 'f-' + f.name });
+        for (const o of f.options) {
+          input.append(el('option', { value: o.value, textContent: o.label,
+            selected: String(o.value) === String(f.value) }));
+        }
+      } else {
+        input = el('input', {
+          id: 'f-' + f.name,
+          type: f.type || 'text',
+          value: f.value == null ? '' : String(f.value),
+          placeholder: f.placeholder || '',
+        });
+        if (f.min != null) input.min = String(f.min);
+        if (f.max != null) input.max = String(f.max);
+      }
+      inputs[f.name] = input;
+      wrap.append(input);
+      if (f.hint) wrap.append(el('span', { className: 'hint', textContent: f.hint }));
+      box.append(wrap);
+    }
+
+    const values = () => Object.fromEntries(
+      Object.entries(inputs).map(([k, i]) => [k, i.value.trim()]));
+
+    const save = el('button', { className: 'btn', textContent: confirm });
+    const cancel = el('button', { className: 'btn ghost', textContent: 'Cancel' });
+    cancel.addEventListener('click', () => close(null));
+    save.addEventListener('click', async () => {
+      const v = values();
+      if (submit) {
+        const problem = await submit(v);
+        if (problem) {
+          error.textContent = problem;
+          error.classList.remove('hidden');
+          return;
+        }
+      }
+      close(v);
+    });
+    box.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && e.target.tagName !== 'SELECT') save.click();
+    });
+
+    back.addEventListener('click', e => { if (e.target === back) close(null); });
+    box.append(el('div', { className: 'actions' }, [cancel, save]));
+    back.append(box);
+    document.body.append(back);
+    const first = Object.values(inputs)[0];
+    if (first) first.focus();
+  });
+}
+
 function pickPage(screens, menu) {
   return new Promise(resolve => {
     const back = el('div', { className: 'modal-back' });
@@ -1459,17 +1566,36 @@ function areaList(areas) {
 }
 
 async function newArea() {
-  const name = prompt('What is this area called? (Terrace, Family, First floor…)');
-  if (!name) return;
-  const code = prompt('A short code for it', name.slice(0, 8).toUpperCase());
-  if (!code) return;
-  try {
-    const made = await api('/floor-sections', { method: 'POST',
-      body: JSON.stringify({ code, name, sort_order: 0 }) });
-    selectedAreaId = made.id;
-    toast(name + ' added');
-    renderFloor();
-  } catch (ex) { toast(ex.message); }
+  let made = null;
+  const done = await formModal({
+    title: 'New area',
+    confirm: 'Add area',
+    fields: [
+      { name: 'name', label: 'Name',
+        placeholder: 'Ground floor, Terrace, Family section…' },
+      { name: 'code', label: 'Short code',
+        hint: 'How reports and imports refer to it. Left blank, it is taken '
+          + 'from the name.' },
+      { name: 'sort_order', label: 'Order on the till', type: 'number',
+        value: 0, min: 0 },
+    ],
+    submit: async v => {
+      if (!v.name) return 'Give the area a name.';
+      const code = (v.code || v.name).replace(/[^A-Za-z0-9]/g, '')
+        .slice(0, 12).toUpperCase();
+      if (!code) return 'That name has no letters to make a code from.';
+      try {
+        made = await api('/floor-sections', { method: 'POST',
+          body: JSON.stringify({
+            code, name: v.name, sort_order: Number(v.sort_order) || 0 }) });
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!done || !made) return;
+  selectedAreaId = made.id;
+  toast(made.name + ' added');
+  renderFloor();
 }
 
 async function openArea(area) {
@@ -1592,24 +1718,52 @@ async function onTableCell(area, table, x, y) {
 }
 
 async function newTable(area, tables, at) {
-  const suggested = tables.length
-    ? Math.max(...tables.map(t => t.table_no)) + 1 : 1;
-  const number = prompt('Table number', String(suggested));
-  if (!number) return;
-  const seats = prompt('How many does it seat?', '2');
-  if (!seats) return;
-  try {
-    await api('/tables', { method: 'POST', body: JSON.stringify({
-      section_id: area.id,
-      table_no: Number(number),
-      seats: Number(seats),
-      pos_x: at ? at.x : 0,
-      pos_y: at ? at.y : 0,
-      shape: Number(seats) > 4 ? 'rect' : 'round',
-    }) });
-    toast('Table ' + number + ' added');
-    renderFloor();
-  } catch (ex) { toast(ex.message); }
+  // Suggest the next free number across the whole branch, not just this area:
+  // table numbers are branch-wide, and two of them is a bill nobody can place.
+  const all = await api('/tables?include_inactive=true');
+  const suggested = all.length
+    ? Math.max(...all.map(t => t.table_no)) + 1 : 1;
+
+  let added = null;
+  const done = await formModal({
+    title: 'New table in ' + area.name,
+    confirm: 'Add table',
+    fields: [
+      { name: 'table_no', label: 'Table number', type: 'number',
+        value: suggested, min: 1,
+        hint: 'What staff and receipts call it. Unique across the branch.' },
+      { name: 'seats', label: 'Seats', type: 'number', value: 2, min: 1, max: 99 },
+      { name: 'label', label: 'Name (optional)',
+        placeholder: 'By the window, Booth 3…' },
+      { name: 'shape', label: 'Shape', type: 'select', value: 'round',
+        options: [
+          { value: 'round', label: 'Round' },
+          { value: 'square', label: 'Square' },
+          { value: 'rect', label: 'Long' },
+        ] },
+    ],
+    submit: async v => {
+      const number = Number(v.table_no);
+      const seats = Number(v.seats);
+      if (!Number.isInteger(number) || number < 1) return 'Table numbers are whole numbers from 1.';
+      if (!Number.isInteger(seats) || seats < 1) return 'A table seats at least one.';
+      try {
+        added = await api('/tables', { method: 'POST', body: JSON.stringify({
+          section_id: area.id,
+          table_no: number,
+          seats,
+          label: v.label || null,
+          shape: v.shape,
+          pos_x: at ? at.x : 0,
+          pos_y: at ? at.y : 0,
+        }) });
+      } catch (ex) { return ex.message; }
+      return null;
+    },
+  });
+  if (!done || !added) return;
+  toast('Table ' + added.table_no + ' added');
+  renderFloor();
 }
 
 async function editTable(area, table) {
