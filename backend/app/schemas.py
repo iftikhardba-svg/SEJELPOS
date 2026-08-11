@@ -389,6 +389,9 @@ class TableOut(BaseModel):
     session_id: uuid.UUID | None = None
     opened_by: str | None = None
     guests: int | None = None
+    # Every table this party is sitting at, including this one, when two have
+    # been pushed together. One number means an ordinary table.
+    party_table_nos: list[int] = []
     opened_at: dt.datetime | None = None
     running_total: int | None = None   # halalas, VAT-inclusive
 
@@ -455,6 +458,9 @@ class TableSessionDetail(BaseModel):
     table_no: int
     status: str
     done_soon: bool = False
+    # Sorted, and always contains table_no.
+    party_table_nos: list[int] = []
+    seats: int = 0
     guests: int
     opened_at: dt.datetime
     closed_at: dt.datetime | None = None

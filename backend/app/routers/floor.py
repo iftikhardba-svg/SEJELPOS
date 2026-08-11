@@ -17,6 +17,7 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import false as sa_false
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
@@ -27,6 +28,7 @@ from ..models import (
     DiningTable,
     FloorSection,
     Reservation,
+    SessionTable,
     TableSession,
     TableSessionLine,
 )
@@ -140,6 +142,30 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
         )
         by_table = {s.table_id: s for s in open_sessions}
 
+        # Tables pushed together with another. They belong to the session the
+        # party is on, so the floor shows them occupied and tapping either one
+        # reaches the same bill.
+        merges = list(
+            (
+                await session.execute(
+                    select(SessionTable).where(
+                        SessionTable.tenant_id == ctx.tenant_id,
+                        SessionTable.released_at.is_(None),
+                        SessionTable.session_id.in_(
+                            [s.id for s in open_sessions]
+                        ) if open_sessions else sa_false(),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        session_by_id = {s.id: s for s in open_sessions}
+        for merge in merges:
+            joined = session_by_id.get(merge.session_id)
+            if joined is not None:
+                by_table[merge.table_id] = joined
+
         now = _now()
         upcoming = list(
             (
@@ -159,6 +185,16 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
             .all()
         )
         reserved_tables = {r.table_id for r in upcoming if r.table_id}
+
+    # Which tables each party is sitting at, so both halves of a merge can say
+    # so and a waiter tapping either one knows what they are walking into.
+    party_tables: dict[uuid.UUID, list[int]] = {}
+    for table in tables:
+        s = by_table.get(table.id)
+        if s is not None:
+            party_tables.setdefault(s.id, []).append(table.table_no)
+    for numbers in party_tables.values():
+        numbers.sort()
 
     out_tables = []
     for t in tables:
@@ -182,6 +218,7 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
                 done_soon=bool(s and s.done_soon),
                 session_id=s.id if s else None,
                 opened_by=s.opened_by if s else None,
+                party_table_nos=party_tables.get(s.id, []) if s else [],
                 guests=s.guests if s else None,
                 opened_at=s.opened_at if s else None,
                 running_total=gross if s else None,
@@ -235,6 +272,24 @@ async def open_table(
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
                 f"table {table.table_no} is already open (session {existing.id})",
+            )
+
+        # Nor can it be half of a party sitting across two tables. The open
+        # session lives on the party's other table, so the check above does not
+        # see this one at all.
+        merged = (
+            await session.execute(
+                select(SessionTable).where(
+                    SessionTable.table_id == table_id,
+                    SessionTable.released_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if merged is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"table {table.table_no} is part of another party "
+                f"(session {merged.session_id})",
             )
 
         if body.guests > (table.max_seats or table.seats):
@@ -357,6 +412,186 @@ async def add_lines(
         return _detail(ts, table, sorted(ts.lines, key=lambda x: x.line_no))
 
 
+async def _live_session(session, session_id: uuid.UUID, tenant_id: uuid.UUID):
+    """The open session, with its lines, or a 404/409 explaining why not."""
+    ts = (
+        await session.execute(
+            select(TableSession)
+            .options(selectinload(TableSession.lines))
+            .where(
+                TableSession.id == session_id,
+                TableSession.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if ts is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no such session")
+    if ts.status != OPEN:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "that table has already been settled"
+        )
+    return ts
+
+
+async def _party_tables(session, ts) -> list[DiningTable]:
+    """Every table this party is sitting at, its own first."""
+    joined = list(
+        (
+            await session.execute(
+                select(SessionTable).where(
+                    SessionTable.session_id == ts.id,
+                    SessionTable.released_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ids = [ts.table_id] + [m.table_id for m in joined]
+    rows = list(
+        (
+            await session.execute(
+                select(DiningTable).where(DiningTable.id.in_(ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    rows.sort(key=lambda t: (t.id != ts.table_id, t.table_no))
+    return rows
+
+
+@router.post("/sessions/{session_id}/tables/{table_id}",
+             response_model=TableSessionDetail)
+async def join_table(
+    session_id: uuid.UUID,
+    table_id: uuid.UUID,
+    guests: int | None = Query(
+        None, description="the party size now the tables are together"
+    ),
+    ctx: DeviceContext = Depends(current_device),
+) -> TableSessionDetail:
+    """Push another table onto this party — two twos for a four.
+
+    One party, one order, one bill. The alternative a till without this forces
+    is two sessions for one table of people, which splits their order across
+    two kitchen tickets and two invoices and leaves the waiter reconciling it
+    by hand.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        ts = await _live_session(session, session_id, ctx.tenant_id)
+
+        table = (
+            await session.execute(
+                select(DiningTable).where(
+                    DiningTable.id == table_id,
+                    DiningTable.tenant_id == ctx.tenant_id,
+                    DiningTable.branch_id == ctx.branch_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if table is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such table")
+        if not table.is_active:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "table is out of service"
+            )
+        if table.id == ts.table_id:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "that is the party's own table",
+            )
+
+        # It cannot be somebody else's, whether they seated it or merged it.
+        taken = (
+            await session.execute(
+                select(TableSession).where(
+                    TableSession.table_id == table_id,
+                    TableSession.status == OPEN,
+                )
+            )
+        ).scalar_one_or_none()
+        if taken is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"table {table.table_no} is already open (session {taken.id})",
+            )
+        already = (
+            await session.execute(
+                select(SessionTable).where(
+                    SessionTable.table_id == table_id,
+                    SessionTable.released_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if already is not None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"table {table.table_no} is already part of another party",
+            )
+
+        session.add(SessionTable(
+            tenant_id=ctx.tenant_id,
+            session_id=ts.id,
+            table_id=table_id,
+            joined_at=_now(),
+        ))
+        try:
+            await session.flush()
+        except IntegrityError:
+            # Two waiters merged the same table at once; the partial unique
+            # index is what actually decides it.
+            raise HTTPException(
+                status.HTTP_409_CONFLICT, "table was taken by someone else"
+            )
+
+        tables = await _party_tables(session, ts)
+        seats = sum(t.max_seats or t.seats for t in tables)
+        if guests is not None:
+            if guests > seats:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"the tables together seat {seats}, not {guests}",
+                )
+            ts.guests = guests
+            await session.flush()
+
+        return _detail(ts, tables[0], sorted(ts.lines, key=lambda x: x.line_no),
+                       tables=tables)
+
+
+@router.delete("/sessions/{session_id}/tables/{table_id}",
+               response_model=TableSessionDetail)
+async def release_joined_table(
+    session_id: uuid.UUID,
+    table_id: uuid.UUID,
+    ctx: DeviceContext = Depends(current_device),
+) -> TableSessionDetail:
+    """Take a table back out of a party — merged by mistake, or they moved."""
+    async with tenant_session(ctx.tenant_id) as session:
+        ts = await _live_session(session, session_id, ctx.tenant_id)
+        merge = (
+            await session.execute(
+                select(SessionTable).where(
+                    SessionTable.session_id == session_id,
+                    SessionTable.table_id == table_id,
+                    SessionTable.released_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if merge is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                "that table is not part of this party",
+            )
+
+        merge.released_at = _now()
+        await session.flush()
+        tables = await _party_tables(session, ts)
+        return _detail(ts, tables[0], sorted(ts.lines, key=lambda x: x.line_no),
+                       tables=tables)
+
+
 @router.post("/sessions/{session_id}/done-soon", response_model=TableSessionDetail)
 async def mark_done_soon(
     session_id: uuid.UUID,
@@ -443,17 +678,33 @@ async def close_session(
                 "billed to, or those items vanish without a bill",
             )
 
+        now = _now()
         ts.sale_uuid = sale_uuid
         ts.status = BILLED if sale_uuid else ABANDONED
-        ts.closed_at = _now()
+        ts.closed_at = now
+
+        # Any tables pushed together for this party go back to being their own
+        # tables. Without this a four that sat on two twos leaves one of them
+        # occupied by a bill that has already been paid.
+        tables = await _party_tables(session, ts)
+        joined = list(
+            (
+                await session.execute(
+                    select(SessionTable).where(
+                        SessionTable.session_id == ts.id,
+                        SessionTable.released_at.is_(None),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for merge in joined:
+            merge.released_at = now
         await session.flush()
 
-        table = (
-            await session.execute(
-                select(DiningTable).where(DiningTable.id == ts.table_id)
-            )
-        ).scalar_one()
-        return _detail(ts, table, sorted(ts.lines, key=lambda x: x.line_no))
+        return _detail(ts, tables[0], sorted(ts.lines, key=lambda x: x.line_no),
+                       tables=tables)
 
 
 # --------------------------------------------------------------------------
@@ -573,17 +824,20 @@ async def create_reservation(
 
 # --------------------------------------------------------------------------
 
-def _detail(ts, table, lines) -> TableSessionDetail:
+def _detail(ts, table, lines, tables=None) -> TableSessionDetail:
     gross = sum(
         int(round(x.unit_price * float(x.qty))) for x in lines if not x.voided
     )
     net, tax = split_inclusive(gross)
+    party = tables or [table]
     return TableSessionDetail(
         session_id=ts.id,
         table_id=ts.table_id,
         table_no=table.table_no,
         status=ts.status,
         done_soon=ts.done_soon,
+        party_table_nos=sorted(t.table_no for t in party),
+        seats=sum(t.max_seats or t.seats for t in party),
         guests=ts.guests,
         opened_at=ts.opened_at,
         closed_at=ts.closed_at,

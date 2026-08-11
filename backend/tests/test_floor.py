@@ -139,6 +139,131 @@ async def test_a_settled_table_cannot_be_marked_nearly_done(client, floor):
     assert r.status_code == 409
 
 
+async def test_two_twos_make_a_four(client, floor):
+    """Four people, two tables of two. One party, one order, one bill."""
+    first, second = str(floor["table_ids"][0]), str(floor["table_ids"][1])
+
+    opened = await client.post(
+        f"/v1/tables/{first}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    session_id = opened.json()["session_id"]
+
+    r = await client.post(
+        f"/v1/sessions/{session_id}/tables/{second}?guests=4",
+        headers=floor["headers"],
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["guests"] == 4
+    assert body["seats"] == 6            # a two and a four in the fixture
+    assert len(body["party_table_nos"]) == 2
+
+    # Both tables read as the same party, so tapping either reaches the bill.
+    tables = (await client.get("/v1/floor", headers=floor["headers"])).json()[
+        "tables"
+    ]
+    joined = [t for t in tables if t["id"] in (first, second)]
+    assert {t["status"] for t in joined} == {"open"}
+    assert {t["session_id"] for t in joined} == {session_id}
+    assert all(len(t["party_table_nos"]) == 2 for t in joined)
+
+
+async def test_a_merged_table_cannot_be_taken_by_someone_else(client, floor):
+    first, second = str(floor["table_ids"][0]), str(floor["table_ids"][1])
+    opened = await client.post(
+        f"/v1/tables/{first}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    session_id = opened.json()["session_id"]
+    await client.post(
+        f"/v1/sessions/{session_id}/tables/{second}", headers=floor["headers"]
+    )
+
+    # Another waiter tries to seat the half that was pushed over.
+    r = await client.post(
+        f"/v1/tables/{second}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    assert r.status_code == 409
+
+    # And a second party cannot merge it either.
+    third = str(floor["table_ids"][2])
+    other = await client.post(
+        f"/v1/tables/{third}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    r = await client.post(
+        f"/v1/sessions/{other.json()['session_id']}/tables/{second}",
+        headers=floor["headers"],
+    )
+    assert r.status_code == 409
+    assert "another party" in r.json()["detail"]
+
+
+async def test_a_party_cannot_be_bigger_than_the_tables_together(client, floor):
+    first, second = str(floor["table_ids"][0]), str(floor["table_ids"][1])
+    opened = await client.post(
+        f"/v1/tables/{first}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    r = await client.post(
+        f"/v1/sessions/{opened.json()['session_id']}/tables/{second}?guests=9",
+        headers=floor["headers"],
+    )
+    assert r.status_code == 400
+    assert "seat 6" in r.json()["detail"]
+
+
+async def test_paying_gives_both_tables_back(client, floor):
+    first, second = str(floor["table_ids"][0]), str(floor["table_ids"][1])
+    opened = await client.post(
+        f"/v1/tables/{first}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    session_id = opened.json()["session_id"]
+    await client.post(
+        f"/v1/sessions/{session_id}/tables/{second}", headers=floor["headers"]
+    )
+    await client.post(
+        f"/v1/sessions/{session_id}/close", headers=floor["headers"]
+    )
+
+    tables = (await client.get("/v1/floor", headers=floor["headers"])).json()[
+        "tables"
+    ]
+    # A four that sat on two twos must not leave one of them occupied by a
+    # bill that has already been paid.
+    assert {t["status"] for t in tables if t["id"] in (first, second)} == {"free"}
+
+    # And the table can be seated again straight away.
+    again = await client.post(
+        f"/v1/tables/{second}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    assert again.status_code == 200, again.text
+
+
+async def test_a_table_can_be_taken_back_out_of_a_party(client, floor):
+    first, second = str(floor["table_ids"][0]), str(floor["table_ids"][1])
+    opened = await client.post(
+        f"/v1/tables/{first}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+    session_id = opened.json()["session_id"]
+    await client.post(
+        f"/v1/sessions/{session_id}/tables/{second}", headers=floor["headers"]
+    )
+
+    r = await client.delete(
+        f"/v1/sessions/{session_id}/tables/{second}", headers=floor["headers"]
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["party_table_nos"] == [
+        t["table_no"] for t in (await client.get(
+            "/v1/floor", headers=floor["headers"])).json()["tables"]
+        if t["id"] == first
+    ]
+
+    tables = (await client.get("/v1/floor", headers=floor["headers"])).json()[
+        "tables"
+    ]
+    released = [t for t in tables if t["id"] == second][0]
+    assert released["status"] == "free"
+
+
 async def test_cannot_open_a_table_twice(client, floor):
     """Two waiters, one table. The second must be told, not given a second bill."""
     tid = str(floor["table_ids"][0])

@@ -30,7 +30,7 @@ Map<String, dynamic> floorFixture({bool table12Open = true}) => {
           'id': 'tbl-11', 'table_no': 11, 'section_id': 'sec-1', 'seats': 4,
           'max_seats': 6, 'pos_x': 0, 'pos_y': 0, 'width': 2, 'height': 2,
           'shape': 'round', 'can_reserve': true, 'is_active': true,
-          'status': 'free',
+          'status': 'free', 'party_table_nos': <int>[],
         },
         {
           'id': 'tbl-12', 'table_no': 12, 'section_id': 'sec-1', 'seats': 2,
@@ -40,6 +40,7 @@ Map<String, dynamic> floorFixture({bool table12Open = true}) => {
           if (table12Open) 'session_id': 'ses-12',
           if (table12Open) 'guests': 2,
           if (table12Open) 'running_total': 4500,
+          'party_table_nos': table12Open ? <int>[12] : <int>[],
         },
       ],
       'reservations': [],
@@ -341,6 +342,43 @@ void main() {
     expect(calls, contains('GET /v1/tables/tbl-12/session'));
     expect(find.text('Charge 16.00 · MADA'), findsOneWidget);
     expect(find.textContaining('Picked up 1 items'), findsOneWidget);
+  });
+
+  testWidgets('two twos are pushed together into one party', (tester) async {
+    seedDineIn();
+    await pumpTill(tester);
+
+    // Table 12 has a party of two on it; table 11 is free. Four have arrived.
+    await tester.longPress(find.text('11'));
+    await tester.pumpAndSettle();
+    expect(find.text('Join to a party…'), findsOneWidget);
+    await tester.tap(find.text('Join to a party…'));
+    await tester.pumpAndSettle();
+
+    // One party open, so no picker — straight to the party size, which the
+    // two tables together can now hold.
+    expect(find.textContaining('how many now?'), findsOneWidget);
+    await tester.tap(find.widgetWithText(OutlinedButton, '4'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Seat 4'));
+    await tester.pumpAndSettle();
+
+    expect(calls, contains('POST /v1/sessions/ses-12/tables/tbl-11'));
+  });
+
+  testWidgets('a merged party reads as one thing on both its tables',
+      (tester) async {
+    final table = FloorTable.fromJson({
+      'id': 'tbl-12', 'table_no': 12, 'section_id': 'sec-1', 'seats': 2,
+      'pos_x': 0, 'pos_y': 0, 'width': 2, 'height': 2, 'shape': 'square',
+      'status': 'open', 'is_active': true, 'session_id': 'ses-12',
+      'party_table_nos': [11, 12],
+    });
+
+    // One party, one bill, one name — not "table 12" on one tile and
+    // "table 11" on the other.
+    expect(table.isMerged, isTrue);
+    expect(table.name, 'Tables 11 + 12');
   });
 
   testWidgets('the room is read by colour, the way the old screen was',

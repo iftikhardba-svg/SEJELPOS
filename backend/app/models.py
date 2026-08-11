@@ -1064,6 +1064,45 @@ class TableSession(Base):
     )
 
 
+class SessionTable(Base):
+    """A table pushed together with another for one party.
+
+    Four people on two twos is an evening in every restaurant, and it is one
+    party, one order and one bill — not two of each. The session keeps its
+    original table and gains the rest through here, so the floor can show them
+    as one and the capacity check can add the seats up.
+
+    Rows survive the session so a bill can still be read back to the tables it
+    was eaten at; `released_at` is what makes a table free again.
+    """
+
+    __tablename__ = "session_table"
+    __table_args__ = (
+        # A table can be in at most one live merge. Same lesson as the open
+        # session index: the WHERE clause has to be given per dialect or
+        # SQLite builds a full unique index and a table can never be joined
+        # to anything a second time.
+        Index(
+            "ux_session_table_live", "table_id",
+            unique=True,
+            postgresql_where=sa_text("released_at IS NULL"),
+            sqlite_where=sa_text("released_at IS NULL"),
+        ),
+        Index("ix_session_table_session", "session_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenant.id"), index=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_session.id", ondelete="CASCADE"), index=True
+    )
+    table_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("dining_table.id"))
+    joined_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    released_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
 class TableSessionLine(Base):
     """An item ordered against a table before the bill is closed.
 

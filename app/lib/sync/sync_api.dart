@@ -248,6 +248,27 @@ class SyncApi {
     return _decode(r);
   }
 
+  /// Push another table onto a party — two twos for a four.
+  Future<Map<String, dynamic>> joinTable(String sessionId, String tableId,
+      {int? guests}) async {
+    final query = guests == null ? '' : '?guests=$guests';
+    final r = await _client.post(
+      _u('/sessions/$sessionId/tables/$tableId$query'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
+  /// Take a table back out of a party.
+  Future<Map<String, dynamic>> releaseJoinedTable(
+      String sessionId, String tableId) async {
+    final r = await _client.delete(
+      _u('/sessions/$sessionId/tables/$tableId'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
   /// Flag a table as nearly finished so the floor shows it freeing up.
   Future<Map<String, dynamic>> markDoneSoon(String sessionId,
       {bool done = true}) async {

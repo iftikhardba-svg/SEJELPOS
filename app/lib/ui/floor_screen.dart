@@ -39,6 +39,7 @@ class FloorTable {
     this.openedAt,
     this.runningTotal,
     this.openedBy,
+    this.partyTableNos = const [],
   });
 
   factory FloorTable.fromJson(Map<String, dynamic> j) => FloorTable(
@@ -63,6 +64,10 @@ class FloorTable {
             : DateTime.tryParse(j['opened_at'] as String),
         runningTotal: j['running_total'] as int?,
         openedBy: j['opened_by'] as String?,
+        partyTableNos: [
+          for (final n in (j['party_table_nos'] as List? ?? const []))
+            n as int,
+        ],
       );
 
   final String id;
@@ -92,7 +97,17 @@ class FloorTable {
   final int? runningTotal;
   final String? openedBy;
 
-  String get name => label ?? 'Table $tableNo';
+  /// Every table this party is sitting at. More than one means tables were
+  /// pushed together, and both halves say so.
+  final List<int> partyTableNos;
+
+  bool get isMerged => partyTableNos.length > 1;
+
+  /// What the waiter calls it. A party across two tables is one thing with
+  /// one bill, so it reads as one thing.
+  String get name => isMerged
+      ? 'Tables ${partyTableNos.join(" + ")}'
+      : (label ?? 'Table $tableNo');
   bool get isOpen => status == 'open';
 }
 
@@ -329,6 +344,129 @@ class _FloorScreenState extends State<FloorScreen> {
         ..showSnackBar(SnackBar(content: Text(e.detail)));
       unawaited(_load());
     }
+  }
+
+  /// What can be done to a table besides taking an order on it.
+  Future<void> _tableMenu(FloorTable table) async {
+    // Every open party except this table's own, since that is what a free
+    // table can be pushed onto.
+    final parties = <String, FloorTable>{};
+    for (final other in _tables) {
+      if (other.isOpen && other.sessionId != null &&
+          other.sessionId != table.sessionId) {
+        parties.putIfAbsent(other.sessionId!, () => other);
+      }
+    }
+
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text(table.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(table.isOpen
+                  ? '${table.guests ?? "?"} guests'
+                  : '${table.seats} seats · free'),
+            ),
+            const Divider(height: 1),
+            if (table.isOpen)
+              ListTile(
+                leading: const Icon(Icons.timelapse),
+                title: Text(table.doneSoon
+                    ? 'Not leaving yet after all'
+                    : 'Mark as done soon'),
+                onTap: () => Navigator.of(context).pop('done-soon'),
+              ),
+            // Pushing tables together: a four on two twos. Offered on the free
+            // table, because that is the one being carried over to the party.
+            if (!table.isOpen && parties.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.merge),
+                title: const Text('Join to a party…'),
+                subtitle: const Text('Two tables, one bill'),
+                onTap: () => Navigator.of(context).pop('merge'),
+              ),
+            if (table.isMerged)
+              ListTile(
+                leading: const Icon(Icons.call_split),
+                title: const Text('Take this table out of the party'),
+                onTap: () => Navigator.of(context).pop('unmerge'),
+              ),
+          ],
+        ),
+      ),
+    );
+
+    switch (action) {
+      case 'done-soon':
+        await _toggleDoneSoon(table);
+      case 'merge':
+        await _merge(table, parties.values.toList());
+      case 'unmerge':
+        await _unmerge(table);
+      default:
+        return;
+    }
+  }
+
+  /// Push [table] onto a party already sitting somewhere else.
+  Future<void> _merge(FloorTable table, List<FloorTable> parties) async {
+    final host = parties.length == 1
+        ? parties.single
+        : await showDialog<FloorTable>(
+            context: context,
+            builder: (context) => SimpleDialog(
+              title: Text('Join ${table.name} to which party?'),
+              children: [
+                for (final party in parties)
+                  SimpleDialogOption(
+                    onPressed: () => Navigator.of(context).pop(party),
+                    child: Text('${party.name} · '
+                        '${party.guests ?? "?"} guests'),
+                  ),
+              ],
+            ),
+          );
+    if (host == null || !mounted) return;
+
+    final seats = host.seats + table.seats;
+    final guests = await showDialog<int>(
+      context: context,
+      builder: (context) => _GuestsDialog(
+        table: table,
+        title: '${host.name} + ${table.name} · how many now?',
+        most: seats,
+        start: host.guests ?? seats,
+      ),
+    );
+    if (guests == null) return;
+
+    try {
+      await widget.api.joinTable(host.sessionId!, table.id, guests: guests);
+    } on SyncApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(e.detail)));
+      }
+    }
+    await _load();
+  }
+
+  Future<void> _unmerge(FloorTable table) async {
+    try {
+      await widget.api.releaseJoinedTable(table.sessionId!, table.id);
+    } on SyncApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(content: Text(e.detail)));
+      }
+    }
+    await _load();
   }
 
   /// Nearly finished, or not any more.
@@ -579,12 +717,10 @@ class _FloorScreenState extends State<FloorScreen> {
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => unawaited(_tap(table)),
-          // Held down: the table is nearly finished. A hint for whoever is
-          // working the door, and the only way the floor can show a table
-          // freeing up before the bill is paid.
-          onLongPress: table.isOpen
-              ? () => unawaited(_toggleDoneSoon(table))
-              : null,
+          // Held down: everything that can be done to a table other than
+          // taking an order on it — mark it as leaving, push it onto another
+          // party, or take it back out of one.
+          onLongPress: () => unawaited(_tableMenu(table)),
           child: Padding(
             padding: const EdgeInsets.all(4),
             // Scaled to fit rather than sized to hope: a two-seat table is a
@@ -641,22 +777,33 @@ class _FloorScreenState extends State<FloorScreen> {
 /// bigger than the table, and because covers are the number every restaurant
 /// report is built on.
 class _GuestsDialog extends StatefulWidget {
-  const _GuestsDialog({required this.table});
+  const _GuestsDialog({
+    required this.table,
+    this.title,
+    this.most,
+    this.start,
+  });
 
   final FloorTable table;
+
+  /// Overridden when tables are being pushed together: the question is then
+  /// about the party, not the table.
+  final String? title;
+  final int? most;
+  final int? start;
 
   @override
   State<_GuestsDialog> createState() => _GuestsDialogState();
 }
 
 class _GuestsDialogState extends State<_GuestsDialog> {
-  late int _guests = widget.table.seats;
+  late int _guests = widget.start ?? widget.table.seats;
 
   @override
   Widget build(BuildContext context) {
-    final most = widget.table.maxSeats;
+    final most = widget.most ?? widget.table.maxSeats;
     return AlertDialog(
-      title: Text('${widget.table.name} · how many?'),
+      title: Text(widget.title ?? '${widget.table.name} · how many?'),
       content: SizedBox(
         width: 360,
         child: Wrap(
