@@ -440,6 +440,54 @@ void main() {
     expect(find.text('1'), findsNothing);
   });
 
+  testWidgets('an empty area says so, and does not blame the branch',
+      (tester) async {
+    seedDineIn();
+    calls = [];
+    final api = SyncApi(
+      baseUrl: 'http://floor.test',
+      token: 'device-token',
+      client: MockClient((request) async => http.Response(
+            jsonEncode({
+              'sections': [
+                {'id': 'sec-1', 'code': 'ROOF', 'name': 'Roof garden',
+                 'sort_order': 0},
+                {'id': 'sec-2', 'code': 'GROUND', 'name': 'Ground floor',
+                 'sort_order': 1},
+              ],
+              'tables': [
+                {
+                  'id': 'g-1', 'table_no': 1, 'section_id': 'sec-2',
+                  'seats': 2, 'pos_x': 0, 'pos_y': 0, 'width': 2, 'height': 2,
+                  'shape': 'round', 'can_reserve': true, 'is_active': true,
+                  'status': 'free', 'party_table_nos': <int>[],
+                },
+              ],
+              'reservations': [],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          )),
+    );
+
+    tester.view.physicalSize = const Size(1400, 1050);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(home: TillScreen(db: db, api: api)));
+    await tester.pumpAndSettle();
+
+    // The floor opens on an area with nothing in it. Telling a waiter the
+    // branch has no tables — while the next area along is full — is how a
+    // screen loses their trust.
+    expect(find.textContaining('Nothing in Roof garden yet'), findsOneWidget);
+    expect(find.textContaining('No tables are set up'), findsNothing);
+
+    // And the way out is right there: the area chips are still on screen.
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Ground floor'));
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsOneWidget);
+  });
+
   testWidgets('the room is read by colour, the way the old screen was',
       (tester) async {
     seedDineIn();

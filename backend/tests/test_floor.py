@@ -208,6 +208,29 @@ async def test_the_office_sets_up_the_areas_a_restaurant_works_in(
     assert r.status_code == 200, r.text
 
 
+async def test_a_closed_area_is_off_the_till(client, floor, seeded):
+    """A closed area on the till is a tab that opens onto nothing — and if it
+    sorts first, it is what the floor opens on."""
+    office = {"Authorization": f"Bearer {seeded['a']['office_token']}"}
+    made = await client.post(
+        "/v1/office/floor-sections",
+        json={"code": "ROOF", "name": "Roof garden", "sort_order": 0},
+        headers=office,
+    )
+    area = made.json()["id"]
+
+    names = [s["name"] for s in (await client.get(
+        "/v1/floor", headers=floor["headers"])).json()["sections"]]
+    assert "Roof garden" in names
+
+    await client.patch(f"/v1/office/floor-sections/{area}",
+                       json={"is_active": False}, headers=office)
+
+    names = [s["name"] for s in (await client.get(
+        "/v1/floor", headers=floor["headers"])).json()["sections"]]
+    assert "Roof garden" not in names
+
+
 async def test_a_table_in_use_is_not_moved_under_the_party(client, floor, seeded):
     office = {"Authorization": f"Bearer {seeded['a']['office_token']}"}
     tid = str(floor["table_ids"][0])

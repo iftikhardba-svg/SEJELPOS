@@ -541,6 +541,77 @@ class _FloorScreenState extends State<FloorScreen> {
     );
   }
 
+  /// The legend, the areas, and the two switches — above the room itself, and
+  /// above an empty area too, because the way out of an empty one is a chip in
+  /// this bar.
+  Widget _header(List<FloorTable> shown, ColorScheme scheme) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      // A Wrap, not a Row: the header carries a legend, the areas, the view
+      // picker and the counter button, and on a narrow tablet a Row paints
+      // warning stripes across the top of the floor instead.
+      child: Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        runSpacing: 4,
+        children: [
+          // What the colours mean, on the screen rather than in a manual: the
+          // floor is read at a glance by people who never open one.
+          _legend(),
+          if (_sections.length > 1)
+            for (final s in _sections)
+              ChoiceChip(
+                selected: s.id == _section,
+                onSelected: (_) => setState(() => _section = s.id),
+                label: Text(s.name),
+              ),
+          Text('${shown.where((t) => t.isOpen).length} of ${shown.length} '
+              'in use'),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Reload the floor',
+            onPressed: _load,
+          ),
+          // What the tables show. A manager reads a room by spend and by how
+          // long people have been sitting; a waiter reads it by who needs
+          // them. Same floor, different question.
+          PopupMenuButton<TableView>(
+            tooltip: 'What the tables show',
+            initialValue: _view,
+            onSelected: (v) => setState(() => _view = v),
+            itemBuilder: (context) => [
+              for (final view in TableView.values)
+                PopupMenuItem(value: view, child: Text(view.label)),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.info_outline, size: 18),
+                  const SizedBox(width: 4),
+                  Text('Table info · ${_view.label}'),
+                ],
+              ),
+            ),
+          ),
+          // Somebody at the counter. One tap and the till is on the menu with
+          // no table, and it stays there until it is sent back to the room —
+          // a waiter's tablet and a counter till want opposite defaults, and
+          // both are right.
+          if (widget.onQuickOrder != null)
+            FilledButton.tonalIcon(
+              onPressed: widget.onQuickOrder,
+              icon: const Icon(Icons.bolt, size: 18),
+              label: Text('Quick order'
+                  '${widget.quickOrderLabel == null ? "" : " · "
+                      "${widget.quickOrderLabel}"}'),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -568,16 +639,33 @@ class _FloorScreenState extends State<FloorScreen> {
         if (_section == null || t.sectionId == _section) t,
     ];
     if (shown.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'No tables are set up for this branch yet. Add them in the back '
-            'office, or take the order on a counter sale type.',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: scheme.onSurfaceVariant),
+      // An empty AREA and an empty FLOOR are different problems, and telling a
+      // waiter the branch has no tables while three other areas are full is
+      // how a screen loses their trust.
+      final area = _sections.where((s) => s.id == _section).map((s) => s.name);
+      final wholeFloorEmpty = _tables.isEmpty;
+      return Column(
+        children: [
+          if (_sections.length > 1) _header(shown, scheme),
+          Expanded(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  wholeFloorEmpty
+                      ? 'No tables are set up for this branch yet. Add them in '
+                          'the back office, or take the order on a counter '
+                          'sale type.'
+                      : 'Nothing in ${area.isEmpty ? "this area" : area.first} '
+                          'yet — pick another area above, or add tables to it '
+                          'in the back office.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ),
           ),
-        ),
+        ],
       );
     }
 
@@ -594,71 +682,7 @@ class _FloorScreenState extends State<FloorScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-          // A Wrap, not a Row: the header carries a legend, the sections, the
-          // view picker and the counter button, and on a narrow tablet a Row
-          // paints warning stripes across the top of the floor instead.
-          child: Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            runSpacing: 4,
-            children: [
-              // What the colours mean, on the screen rather than in a manual:
-              // the floor is read at a glance by people who never open one.
-              _legend(),
-              if (_sections.length > 1)
-                for (final s in _sections)
-                  ChoiceChip(
-                    selected: s.id == _section,
-                    onSelected: (_) => setState(() => _section = s.id),
-                    label: Text(s.name),
-                  ),
-              Text('${shown.where((t) => t.isOpen).length} of ${shown.length} '
-                  'in use'),
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Reload the floor',
-                onPressed: _load,
-              ),
-              // What the tables show. A manager reads a room by spend and by
-              // how long people have been sitting; a waiter reads it by who
-              // needs them. Same floor, different question.
-              PopupMenuButton<TableView>(
-                tooltip: 'What the tables show',
-                initialValue: _view,
-                onSelected: (v) => setState(() => _view = v),
-                itemBuilder: (context) => [
-                  for (final view in TableView.values)
-                    PopupMenuItem(value: view, child: Text(view.label)),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.info_outline, size: 18),
-                      const SizedBox(width: 4),
-                      Text('Table info · ${_view.label}'),
-                    ],
-                  ),
-                ),
-              ),
-              // Somebody at the counter. One tap and the till is on the menu
-              // with no table, and it stays there until it is sent back to
-              // the room — a waiter's tablet and a counter till want opposite
-              // defaults, and both are right.
-              if (widget.onQuickOrder != null)
-                FilledButton.tonalIcon(
-                  onPressed: widget.onQuickOrder,
-                  icon: const Icon(Icons.bolt, size: 18),
-                  label: Text('Quick order'
-                      '${widget.quickOrderLabel == null ? "" : " · "
-                          "${widget.quickOrderLabel}"}'),
-                ),
-            ],
-          ),
-        ),
+        _header(shown, scheme),
         Expanded(
           child: SingleChildScrollView(
             scrollDirection: Axis.vertical,

@@ -86,8 +86,12 @@ async def get_floor(ctx: DeviceContext = Depends(current_device)) -> FloorRespon
                         FloorSection.tenant_id == ctx.tenant_id,
                         FloorSection.branch_id == ctx.branch_id,
                         FloorSection.is_deleted.is_(False),
+                        # A closed area is closed. Leaving it on the till gives
+                        # waiters a tab that opens onto nothing, and the first
+                        # one alphabetically becomes what the floor opens on.
+                        FloorSection.is_active.is_(True),
                     )
-                    .order_by(FloorSection.sort_order, FloorSection.code)
+                    .order_by(FloorSection.sort_order, FloorSection.name)
                 )
             )
             .scalars()
