@@ -869,6 +869,83 @@ class OfficeMenuButtonMove(BaseModel):
     pos_y: int = Field(ge=1, le=20)
 
 
+class OfficeFloorSectionOut(BaseModel):
+    """An area of the restaurant: ground floor, terrace, family, smoking."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    code: str
+    name: str
+    name_ar: str | None = None
+    sort_order: int
+    is_active: bool
+    table_count: int = 0
+    seat_count: int = 0
+
+
+class OfficeFloorSectionCreate(BaseModel):
+    code: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1)
+    name_ar: str | None = None
+    sort_order: int = 0
+
+
+class OfficeFloorSectionUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    name_ar: str | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class OfficeTableOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: uuid.UUID
+    section_id: uuid.UUID
+    table_no: int
+    label: str | None = None
+    seats: int
+    min_seats: int | None = None
+    max_seats: int | None = None
+    pos_x: int
+    pos_y: int
+    width: int
+    height: int
+    shape: str
+    can_reserve: bool
+    is_active: bool
+    # True while somebody is sitting at it. A table in use cannot be taken out
+    # of service or moved to another area under the party eating at it.
+    in_use: bool = False
+
+
+class OfficeTableCreate(BaseModel):
+    section_id: uuid.UUID
+    table_no: int = Field(ge=1)
+    label: str | None = Field(default=None, max_length=32)
+    seats: int = Field(default=2, ge=1, le=99)
+    max_seats: int | None = Field(default=None, ge=1, le=99)
+    pos_x: int = Field(default=0, ge=0)
+    pos_y: int = Field(default=0, ge=0)
+    width: int = Field(default=2, ge=1, le=20)
+    height: int = Field(default=2, ge=1, le=20)
+    shape: str = Field(default="square", pattern="^(square|round|rect)$")
+    can_reserve: bool = True
+
+
+class OfficeTableUpdate(BaseModel):
+    section_id: uuid.UUID | None = None
+    label: str | None = None
+    seats: int | None = Field(default=None, ge=1, le=99)
+    max_seats: int | None = Field(default=None, ge=1, le=99)
+    pos_x: int | None = Field(default=None, ge=0)
+    pos_y: int | None = Field(default=None, ge=0)
+    width: int | None = Field(default=None, ge=1, le=20)
+    height: int | None = Field(default=None, ge=1, le=20)
+    shape: str | None = Field(default=None, pattern="^(square|round|rect)$")
+    can_reserve: bool | None = None
+    is_active: bool | None = None
+
+
 class OfficeDeviceOut(BaseModel):
     id: uuid.UUID
     label: str

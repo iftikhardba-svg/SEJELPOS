@@ -139,6 +139,97 @@ async def test_a_settled_table_cannot_be_marked_nearly_done(client, floor):
     assert r.status_code == 409
 
 
+async def test_the_office_sets_up_the_areas_a_restaurant_works_in(
+    client, floor, seeded
+):
+    """Ground floor, terrace, family, smoking: a restaurant is not one room.
+
+    The migration can only produce what PixelPoint held — one section — so the
+    areas a customer actually works in have to be set up here.
+    """
+    office = {"Authorization": f"Bearer {seeded['a']['office_token']}"}
+
+    r = await client.post(
+        "/v1/office/floor-sections",
+        json={"code": "TERRACE", "name": "Terrace", "sort_order": 2},
+        headers=office,
+    )
+    assert r.status_code == 201, r.text
+    terrace = r.json()["id"]
+
+    # Codes identify an area; two of them is a table nobody can place.
+    again = await client.post(
+        "/v1/office/floor-sections",
+        json={"code": "terrace", "name": "Terrace 2"},
+        headers=office,
+    )
+    assert again.status_code == 409
+
+    r = await client.post(
+        "/v1/office/tables",
+        json={"section_id": terrace, "table_no": 201, "seats": 4,
+              "pos_x": 0, "pos_y": 0, "shape": "round"},
+        headers=office,
+    )
+    assert r.status_code == 201, r.text
+    table_id = r.json()["id"]
+
+    sections = (await client.get(
+        "/v1/office/floor-sections", headers=office)).json()
+    terrace_row = [s for s in sections if s["id"] == terrace][0]
+    assert terrace_row["table_count"] == 1
+    assert terrace_row["seat_count"] == 4
+
+    # The till sees it on the floor immediately — this is live state, not
+    # catalog, so there is nothing to pull.
+    tables = (await client.get(
+        "/v1/floor", headers=floor["headers"])).json()["tables"]
+    assert 201 in [t["table_no"] for t in tables]
+
+    # An area cannot be closed with tables still in it.
+    r = await client.patch(
+        f"/v1/office/floor-sections/{terrace}",
+        json={"is_active": False},
+        headers=office,
+    )
+    assert r.status_code == 400
+    assert "still has 1 tables" in r.json()["detail"]
+
+    # Take the table out of service, and then it can be.
+    await client.patch(
+        f"/v1/office/tables/{table_id}", json={"is_active": False},
+        headers=office,
+    )
+    r = await client.patch(
+        f"/v1/office/floor-sections/{terrace}",
+        json={"is_active": False},
+        headers=office,
+    )
+    assert r.status_code == 200, r.text
+
+
+async def test_a_table_in_use_is_not_moved_under_the_party(client, floor, seeded):
+    office = {"Authorization": f"Bearer {seeded['a']['office_token']}"}
+    tid = str(floor["table_ids"][0])
+    await client.post(
+        f"/v1/tables/{tid}/open", json={"guests": 2}, headers=floor["headers"]
+    )
+
+    r = await client.patch(
+        f"/v1/office/tables/{tid}", json={"is_active": False}, headers=office
+    )
+    assert r.status_code == 409
+    assert "in use" in r.json()["detail"]
+
+    # Renaming it is fine — that does not move anybody.
+    r = await client.patch(
+        f"/v1/office/tables/{tid}", json={"label": "By the window"},
+        headers=office,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["in_use"] is True
+
+
 async def test_two_twos_make_a_four(client, floor):
     """Four people, two tables of two. One party, one order, one bill."""
     first, second = str(floor["table_ids"][0]), str(floor["table_ids"][1])

@@ -381,6 +381,65 @@ void main() {
     expect(table.name, 'Tables 11 + 12');
   });
 
+  testWidgets('the areas a restaurant works in are what the till shows',
+      (tester) async {
+    seedDineIn();
+    // Ground floor and terrace, set up in the back office. A waiter picks the
+    // area before the table, and only that area's tables are in the way.
+    calls = [];
+    final api = SyncApi(
+      baseUrl: 'http://floor.test',
+      token: 'device-token',
+      client: MockClient((request) async {
+        calls.add('${request.method} ${request.url.path}');
+        return http.Response(
+          jsonEncode({
+            'sections': [
+              {'id': 'sec-1', 'code': 'GROUND', 'name': 'Ground floor',
+               'sort_order': 1},
+              {'id': 'sec-2', 'code': 'TERRACE', 'name': 'Terrace',
+               'sort_order': 2},
+            ],
+            'tables': [
+              {
+                'id': 'g-1', 'table_no': 1, 'section_id': 'sec-1', 'seats': 2,
+                'pos_x': 0, 'pos_y': 0, 'width': 2, 'height': 2,
+                'shape': 'round', 'can_reserve': true, 'is_active': true,
+                'status': 'free', 'party_table_nos': <int>[],
+              },
+              {
+                'id': 't-7', 'table_no': 7, 'section_id': 'sec-2', 'seats': 4,
+                'pos_x': 0, 'pos_y': 0, 'width': 2, 'height': 2,
+                'shape': 'rect', 'can_reserve': true, 'is_active': true,
+                'status': 'free', 'party_table_nos': <int>[],
+              },
+            ],
+            'reservations': [],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }),
+    );
+
+    tester.view.physicalSize = const Size(1400, 1050);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(home: TillScreen(db: db, api: api)));
+    await tester.pumpAndSettle();
+
+    // Ground floor first, and only its table.
+    expect(find.text('Ground floor'), findsOneWidget);
+    expect(find.text('Terrace'), findsOneWidget);
+    expect(find.text('1'), findsOneWidget);
+    expect(find.text('7'), findsNothing);
+
+    await tester.tap(find.widgetWithText(ChoiceChip, 'Terrace'));
+    await tester.pumpAndSettle();
+    expect(find.text('7'), findsOneWidget);
+    expect(find.text('1'), findsNothing);
+  });
+
   testWidgets('the room is read by colour, the way the old screen was',
       (tester) async {
     seedDineIn();

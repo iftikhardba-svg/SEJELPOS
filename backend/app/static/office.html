@@ -287,6 +287,7 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
     <button data-tab="dashboard" class="on">Dashboard</button>
     <button data-tab="products">Products &amp; prices</button>
     <button data-tab="menu">Menu layout</button>
+    <button data-tab="floor">Floor plan</button>
     <button data-tab="devices">Devices</button>
     <button data-tab="sales">Sales</button>
   </nav>
@@ -294,6 +295,7 @@ input[type=color] { width: 56px; height: 34px; padding: 2px; border: 1px solid v
     <section id="tab-dashboard"></section>
     <section id="tab-products" class="hidden"></section>
     <section id="tab-menu" class="hidden"></section>
+    <section id="tab-floor" class="hidden"></section>
     <section id="tab-devices" class="hidden"></section>
     <section id="tab-sales" class="hidden"></section>
   </main>
@@ -415,10 +417,10 @@ document.querySelectorAll('nav button').forEach(b =>
 
 function show(tab) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  ['dashboard', 'products', 'menu', 'devices', 'sales'].forEach(t =>
+  ['dashboard', 'products', 'menu', 'floor', 'devices', 'sales'].forEach(t =>
     $('#tab-' + t).classList.toggle('hidden', t !== tab));
   ({ dashboard: renderDashboard, products: renderProducts, menu: renderMenu,
-     devices: renderDevices, sales: renderSales })[tab]();
+     floor: renderFloor, devices: renderDevices, sales: renderSales })[tab]();
 }
 
 function into(id, node) {
@@ -1385,6 +1387,278 @@ function pickProduct() {
     search.focus();
     run();
   });
+}
+
+// ------------------------------------------------------------- floor plan
+//
+// A restaurant is not one room. Ground floor, first floor, terrace, family,
+// singles, smoking, non-smoking: a waiter picks the area before the table, and
+// the till shows exactly what is set up here. The migration can only produce
+// what PixelPoint held — one section per revenue centre — so this is where the
+// areas a customer actually works in get built.
+
+let selectedAreaId = null;
+let heldTableId = null;
+let showRetiredTables = false;
+
+async function renderFloor() {
+  loading('floor');
+  try {
+    const areas = await api('/floor-sections');
+    const wrap = el('div', { className: 'master' });
+    wrap.append(areaList(areas), el('div', { id: 'floorCanvas' }));
+    into('floor', wrap);
+
+    const chosen = areas.find(a => a.id === selectedAreaId) || areas[0];
+    if (chosen) {
+      selectedAreaId = chosen.id;
+      await openArea(chosen);
+    } else {
+      $('#floorCanvas').replaceChildren(panel('Tables',
+        el('p', { className: 'note', textContent:
+          'No areas yet. Add one — a ground floor, a terrace, a family '
+          + 'section — and put its tables in it.' })));
+    }
+  } catch (ex) { failed('floor', ex); }
+}
+
+function areaList(areas) {
+  const p = el('section', { className: 'panel' },
+    [el('h2', { textContent: 'Areas' })]);
+
+  const bar = el('div', { className: 'toolbar' });
+  const add = el('button', { className: 'btn small', textContent: 'New area' });
+  add.addEventListener('click', newArea);
+  bar.append(add, el('span', { className: 'muted',
+    textContent: areas.length + ' areas' }));
+  p.append(bar);
+
+  const list = el('div', { className: 'list' });
+  for (const a of areas) {
+    const row = el('button', {
+      className: 'listrow' + (a.id === selectedAreaId ? ' on' : ''),
+    });
+    row.append(
+      el('div', { className: 'listmain' }, [
+        el('span', { textContent: a.name }),
+        el('span', { className: 'muted',
+          textContent: a.table_count + ' tables · ' + a.seat_count + ' seats' }),
+      ]),
+    );
+    if (!a.is_active) row.append(
+      el('span', { className: 'pill bad', textContent: 'closed' }));
+    row.addEventListener('click', () => {
+      selectedAreaId = a.id;
+      heldTableId = null;
+      renderFloor();
+    });
+    list.append(row);
+  }
+  p.append(list);
+  return p;
+}
+
+async function newArea() {
+  const name = prompt('What is this area called? (Terrace, Family, First floor…)');
+  if (!name) return;
+  const code = prompt('A short code for it', name.slice(0, 8).toUpperCase());
+  if (!code) return;
+  try {
+    const made = await api('/floor-sections', { method: 'POST',
+      body: JSON.stringify({ code, name, sort_order: 0 }) });
+    selectedAreaId = made.id;
+    toast(name + ' added');
+    renderFloor();
+  } catch (ex) { toast(ex.message); }
+}
+
+async function openArea(area) {
+  const host = $('#floorCanvas');
+  host.replaceChildren(el('p', { className: 'note', textContent: 'Loading…' }));
+
+  const tables = await api('/tables?include_inactive=true&section_id=' + area.id);
+  const live = tables.filter(t => t.is_active || showRetiredTables);
+  const p = el('section', { className: 'panel' },
+    [el('h2', { textContent: area.name })]);
+
+  // ---- the area itself ----
+  const bar = el('div', { className: 'toolbar' });
+  const nameInput = el('input', { value: area.name, ariaLabel: 'Area name' });
+  const save = el('button', { className: 'btn small', textContent: 'Rename' });
+  save.addEventListener('click', async () => {
+    try {
+      await api('/floor-sections/' + area.id, { method: 'PATCH',
+        body: JSON.stringify({ name: nameInput.value.trim() }) });
+      toast('Renamed — tills show it on their next look at the floor');
+      renderFloor();
+    } catch (ex) { toast(ex.message); }
+  });
+  const close = el('button', { className: 'btn small ghost',
+    textContent: area.is_active ? 'Close this area' : 'Open this area' });
+  close.addEventListener('click', async () => {
+    try {
+      await api('/floor-sections/' + area.id, { method: 'PATCH',
+        body: JSON.stringify({ is_active: !area.is_active }) });
+      renderFloor();
+    } catch (ex) { toast(ex.message); }
+  });
+  const addTable = el('button', { className: 'btn small', textContent: 'New table' });
+  addTable.addEventListener('click', () => newTable(area, tables));
+  bar.append(nameInput, save, addTable, close);
+  p.append(bar);
+
+  // ---- the plan ----
+  // Ten by ten of the same grid the till draws, so what is arranged here is
+  // what a waiter sees in the room.
+  const byCell = new Map();
+  let across = 10, down = 8;
+  for (const t of live) {
+    byCell.set(`${t.pos_x},${t.pos_y}`, t);
+    across = Math.max(across, t.pos_x + 1);
+    down = Math.max(down, t.pos_y + 1);
+  }
+
+  const grid = el('div', { className: 'menugrid' });
+  grid.style.gridTemplateColumns = `repeat(${across}, minmax(72px, 1fr))`;
+  for (let y = 0; y < down; y++) {
+    for (let x = 0; x < across; x++) {
+      const t = byCell.get(`${x},${y}`);
+      const cell = el('button', {
+        className: 'cell' + (t ? ' filled' : '')
+          + (t && t.id === heldTableId ? ' held' : ''),
+        title: t
+          ? `Table ${t.table_no} · ${t.seats} seats${t.in_use ? ' · in use' : ''}`
+          : `Empty  (${x}, ${y})`,
+      });
+      if (t) {
+        cell.append(
+          el('span', { className: 'celltext',
+            textContent: t.label || ('Table ' + t.table_no) }),
+          el('span', { className: 'cellprice', textContent: t.seats + ' seats' }),
+        );
+        if (t.in_use) cell.append(
+          el('span', { className: 'pill', textContent: 'in use' }));
+        if (!t.is_active) cell.append(
+          el('span', { className: 'pill bad', textContent: 'retired' }));
+      }
+      cell.addEventListener('click', () => onTableCell(area, t, x, y));
+      grid.append(cell);
+    }
+  }
+  p.append(el('div', { className: 'scroll' }, grid));
+
+  const held = tables.find(t => t.id === heldTableId);
+  p.append(el('p', { className: 'note', textContent: held
+    ? `Holding table ${held.table_no}. Click a square to move it there.`
+    : 'Click a table to pick it up and move it, or an empty square to add one. '
+      + 'A table with somebody sitting at it cannot be moved — settle it '
+      + 'first.' }));
+
+  const retired = tables.filter(t => !t.is_active).length;
+  if (retired) {
+    const toggle = el('button', { className: 'btn small ghost',
+      textContent: showRetiredTables
+        ? 'Hide the ' + retired + ' retired tables'
+        : 'Show ' + retired + ' retired tables' });
+    toggle.addEventListener('click', () => {
+      showRetiredTables = !showRetiredTables;
+      renderFloor();
+    });
+    p.append(el('div', { style: 'padding: 0 16px 16px' }, toggle));
+  }
+
+  host.replaceChildren(p);
+}
+
+async function onTableCell(area, table, x, y) {
+  // Holding one? Then this click says where it goes.
+  if (heldTableId) {
+    if (table && table.id === heldTableId) {
+      heldTableId = null;                  // put it back down
+      return renderFloor();
+    }
+    if (table) return toast('There is already a table there');
+    try {
+      await api('/tables/' + heldTableId, { method: 'PATCH',
+        body: JSON.stringify({ pos_x: x, pos_y: y }) });
+      heldTableId = null;
+      renderFloor();
+    } catch (ex) { toast(ex.message); }
+    return;
+  }
+
+  if (table) return editTable(area, table);
+  newTable(area, [], { x, y });
+}
+
+async function newTable(area, tables, at) {
+  const suggested = tables.length
+    ? Math.max(...tables.map(t => t.table_no)) + 1 : 1;
+  const number = prompt('Table number', String(suggested));
+  if (!number) return;
+  const seats = prompt('How many does it seat?', '2');
+  if (!seats) return;
+  try {
+    await api('/tables', { method: 'POST', body: JSON.stringify({
+      section_id: area.id,
+      table_no: Number(number),
+      seats: Number(seats),
+      pos_x: at ? at.x : 0,
+      pos_y: at ? at.y : 0,
+      shape: Number(seats) > 4 ? 'rect' : 'round',
+    }) });
+    toast('Table ' + number + ' added');
+    renderFloor();
+  } catch (ex) { toast(ex.message); }
+}
+
+async function editTable(area, table) {
+  const wrap = el('div');
+  const seats = el('input', { type: 'number', min: '1', max: '99',
+    value: table.seats, style: 'width:80px', ariaLabel: 'Seats' });
+  const label = el('input', { value: table.label || '',
+    placeholder: 'Name (optional)', ariaLabel: 'Label' });
+
+  const areas = await api('/floor-sections');
+  const move = el('select', { ariaLabel: 'Area' });
+  for (const a of areas) {
+    move.append(el('option', { value: a.id, textContent: a.name,
+      selected: a.id === table.section_id }));
+  }
+
+  const save = el('button', { className: 'btn small', textContent: 'Save' });
+  save.addEventListener('click', async () => {
+    try {
+      await api('/tables/' + table.id, { method: 'PATCH', body: JSON.stringify({
+        seats: Number(seats.value),
+        label: label.value.trim() || null,
+        section_id: move.value,
+      }) });
+      toast('Table ' + table.table_no + ' saved');
+      renderFloor();
+    } catch (ex) { toast(ex.message); }
+  });
+
+  const pick = el('button', { className: 'btn small ghost',
+    textContent: 'Move on the plan' });
+  pick.addEventListener('click', () => { heldTableId = table.id; renderFloor(); });
+
+  const retire = el('button', { className: 'btn small ghost',
+    textContent: table.is_active ? 'Take out of service' : 'Put back in service' });
+  retire.addEventListener('click', async () => {
+    try {
+      await api('/tables/' + table.id, { method: 'PATCH',
+        body: JSON.stringify({ is_active: !table.is_active }) });
+      renderFloor();
+    } catch (ex) { toast(ex.message); }
+  });
+
+  wrap.append(el('div', { className: 'toolbar' },
+    [el('span', { className: 'muted', textContent: 'seats' }), seats, label,
+     el('span', { className: 'muted', textContent: 'area' }), move, save]));
+  wrap.append(el('div', { className: 'toolbar' }, [pick, retire]));
+  $('#floorCanvas').replaceChildren(
+    panel('Table ' + table.table_no, wrap));
 }
 
 // ---------------------------------------------------------------- devices
