@@ -1,0 +1,32 @@
+# The versions this project is known to run on (Python 3.14.6, Windows).
+#
+# Pinned rather than ranged on purpose: a POS is delivered as a build, and a
+# resolver picking a different SQLAlchemy on the day of an install is not a
+# thing anybody wants to debug on site. Widen a pin deliberately, with the
+# suite green.
+
+fastapi==0.141.1
+uvicorn==0.52.1
+python-multipart==0.0.32
+
+sqlalchemy==2.0.51
+greenlet==3.5.4          # SQLAlchemy's async bridge; not optional
+alembic==1.18.5
+aiosqlite==0.22.1        # SQLite driver — devices and dev backends
+asyncpg==0.31.0          # PostgreSQL driver — the hosted deployment
+
+pydantic==2.13.4
+pyjwt==2.13.0            # device and back-office session tokens
+cryptography==50.0.0     # ZATCA ECDSA (secp256k1) and scrypt
+lxml==6.1.1              # UBL 2.1 invoice XML
+
+# Tests
+pytest==9.1.1
+pytest-asyncio==1.4.0
+httpx==0.28.1            # the ASGI test client
+
+# Only for tooling outside the service:
+#   openpyxl  — the project-plan workbook (docs/)
+#   pyodbc    — the PixelPoint extract, and it must be installed on the
+#               32-bit interpreter, not this one (see HANDOFF.md)
+openpyxl==3.1.5
