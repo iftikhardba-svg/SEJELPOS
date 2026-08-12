@@ -102,23 +102,31 @@ cd newpos/backend && python -m pip install -r requirements.txt
 cd newpos/app && flutter pub get
 ```
 
-### 2.4 Restore the local data
+### 2.4 The data that git does not carry
 
-Nothing in `local-data/` is in git, and three of the four items are **customer
-data or secrets**. Copy them back to:
+The tree in the archive is **ready to run** — the customer data and the local
+credentials are already in place, because a handoff that needs a scavenger hunt
+before it starts is not a handoff. `local-data/` holds the same four items
+again, separately, so it is obvious what they are and that they are sensitive:
 
-| From `local-data/` | To |
+| `local-data/` | Already in place at |
 |---|---|
-| `migration-out/` | `newpos/migration/out/` |
 | `backend-real.db` | `newpos/backend/real.db` |
+| `migration-out/` | `newpos/migration/out/` |
 | `migration-env.local.ps1` | `newpos/migration/env.local.ps1` |
 | `sybase-mcp.env` | `sybase-mcp/.env` |
 
-`backend/real.db` is the demo backend: the real customer catalog (560 products,
-64 menu screens, 34 sale types, 150 tables), the back-office user, and the
-sales, tables and kitchen tickets produced during development. **It is a
-snapshot taken with `VACUUM INTO`**, so it is internally consistent even though
-the backend was running when it was taken.
+None of it is in git, on purpose (§5). **The archive as a whole is confidential:
+it contains a restaurant's commercial data and one live database password.**
+
+`backend/real.db` is the demo backend — the real customer catalog (560 products,
+64 menu screens, 34 sale types, 152 tables), the back-office user, and the
+13 sales, 61 kitchen tickets and 20 enrolled devices produced during
+development. **It is a snapshot taken with `VACUUM INTO`**, so it is internally
+consistent even though the backend was running when it was taken.
+
+Device databases are deliberately **not** included. A device belongs to the
+machine it was enrolled on; enrol fresh ones on the new laptop (§3.3).
 
 ### 2.5 Prove the install
 
