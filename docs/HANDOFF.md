@@ -51,6 +51,11 @@ explain most of its shape:
 
 ## 2. Setting up on a new laptop
 
+> Putting the **backend on a server** is a different job with its own guide:
+> **`server/README.md`**, plus `server\install.ps1` which does the whole install
+> in one go. A server needs no Flutter, no Visual Studio and no ODBC bridge —
+> only `backend/` and a database. Come back here for a development machine.
+
 ### 2.1 What must be installed
 
 | | Version used | Notes |

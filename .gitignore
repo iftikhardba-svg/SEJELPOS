@@ -30,3 +30,10 @@ app/.flutter-plugins*
 .idea/
 .vscode/
 Thumbs.db
+
+# Server deployment: generated per machine, and one of them is a plaintext
+# password file. env.example.ps1 is the committed template.
+server/env.local.ps1
+server/.venv/
+server/logs/
+server/backups/
