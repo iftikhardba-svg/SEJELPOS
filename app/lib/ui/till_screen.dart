@@ -21,6 +21,7 @@ import '../sync/order_numbers.dart';
 import '../sync/sync_api.dart';
 import '../sync/sync_worker.dart';
 import 'floor_screen.dart';
+import 'receipt_screen.dart';
 import 'setup_screen.dart';
 import 'split_screen.dart';
 import 'tile_grid.dart';
@@ -581,7 +582,8 @@ class _TillScreenState extends State<TillScreen> {
 
     // Paper and kitchen happen off the critical path: the cashier moves to
     // the next customer whether or not the printer answers.
-    unawaited(_printReceipt(sale, completedOrder));
+    final receipt = _receiptBytes(sale, completedOrder);
+    unawaited(_printBytes(receipt));
     unawaited(widget.worker?.syncNow());
 
     final change = sale.payments.fold<int>(0, (a, p) => a + p.change);
@@ -625,6 +627,22 @@ class _TillScreenState extends State<TillScreen> {
           ],
         ),
         actions: [
+          // Always offered, printer or not: it is how a customer sees their
+          // invoice when there is no paper, and how anyone shows the ZATCA QR
+          // without owning a printer.
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              unawaited(_showReceipt(
+                receipt,
+                note: _hasPrinter
+                    ? null
+                    : 'No printer is set up on this till, so this is the '
+                        'receipt on screen. Set one up under the gear icon.',
+              ));
+            },
+            child: const Text('Show receipt'),
+          ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Next customer'),
@@ -664,11 +682,13 @@ class _TillScreenState extends State<TillScreen> {
     }
   }
 
-  Future<void> _printReceipt(CompletedSale sale, String orderLabel) async {
+  /// The exact bytes a printer would be sent for this sale.
+  ///
+  /// Built whether or not one is plugged in: the receipt screen shows these,
+  /// so what appears on the glass is what a TM-T88V would put on paper.
+  List<int> _receiptBytes(CompletedSale sale, String orderLabel) {
     final device =
         widget.db.raw.select('SELECT * FROM device WHERE id = 1').first;
-    final host = device['printer_host'] as String?;
-    if (host == null || host.isEmpty) return; // no printer configured
 
     // Depth comes from the stored parent chain, not from what the screen
     // happens to be holding: the receipt has to describe the sale that was
@@ -714,7 +734,19 @@ class _TillScreenState extends State<TillScreen> {
       // the UNSIGNED banner rather than a QR that would not validate.
       zatcaQr: sale.stamp?.qr,
     ));
+    return bytes;
+  }
 
+  /// Send a receipt to the printer, if there is one.
+  ///
+  /// Returns false when none is configured, which is not a failure — it is a
+  /// till on a desk, or a site whose hardware has not arrived. The caller
+  /// offers the screen instead.
+  Future<bool> _printBytes(List<int> bytes) async {
+    final device =
+        widget.db.raw.select('SELECT * FROM device WHERE id = 1').first;
+    final host = device['printer_host'] as String?;
+    if (host == null || host.isEmpty) return false;
     try {
       await ReceiptPrinter(
         host: host,
@@ -724,6 +756,29 @@ class _TillScreenState extends State<TillScreen> {
     } on Exception {
       if (mounted) _toast('Printer unreachable — receipt not printed');
     }
+    return true;
+  }
+
+  /// Put the receipt on the glass.
+  ///
+  /// The same bytes the printer gets, decoded back — including the ZATCA QR,
+  /// drawn so a phone can scan it off the screen.
+  Future<void> _showReceipt(List<int> bytes, {String? note}) {
+    final printable = _hasPrinter;
+    return Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (context) => ReceiptScreen(
+        bytes: bytes,
+        note: note,
+        onPrint: printable ? () => _printBytes(bytes) : null,
+      ),
+    ));
+  }
+
+  bool get _hasPrinter {
+    final host = widget.db.raw
+        .select('SELECT printer_host FROM device WHERE id = 1')
+        .first['printer_host'] as String?;
+    return host != null && host.isNotEmpty;
   }
 
   /// Choose who is on the till, and remember it on the device.

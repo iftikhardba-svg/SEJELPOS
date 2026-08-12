@@ -21,6 +21,7 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import '../data/pos_database.dart';
 import '../printing/escpos.dart';
 import '../printing/printer.dart';
+import 'receipt_screen.dart';
 
 class SetupScreen extends StatefulWidget {
   const SetupScreen({
@@ -83,8 +84,28 @@ class _SetupScreenState extends State<SetupScreen> {
     _toast(host.isEmpty ? 'Printer cleared' : 'Printer saved');
   }
 
-  /// Prints a real receipt through the real builder — a test that only opened
-  /// a socket would pass on a printer that cannot render our bytes.
+  /// A real receipt through the real builder — a test that only opened a
+  /// socket would pass on a printer that cannot render our bytes.
+  List<int> _testSlip() => buildReceipt(ReceiptData(
+        brandName: (_device()['zatca_seller_name'] as String?) ?? 'POS',
+        // The branch too, so the slip looks like the receipts this till will
+        // actually print rather than a stripped-down cousin of them.
+        branchName: _device()['branch_name'] as String?,
+        vatNumber: (_device()['zatca_vat_number'] as String?) ?? '',
+        receiptNo: 'TEST',
+        orderNo: null,
+        dateTime: DateTime.now(),
+        lines: [ReceiptLine(qty: 1, name: 'PRINTER TEST', amount: 0)],
+        netTotal: 0,
+        taxTotal: 0,
+        finalTotal: 0,
+        payments: const [],
+        // Deliberately unsigned: a test slip is not a tax document, and the
+        // banner says so on the paper. The QR belongs to a real sale, which
+        // is the only thing there is anything true to put in one.
+        zatcaQr: null,
+      ));
+
   Future<void> _testPrint() async {
     final host = _hostController.text.trim();
     final port = int.tryParse(_portController.text.trim()) ?? 9100;
@@ -96,27 +117,26 @@ class _SetupScreenState extends State<SetupScreen> {
     setState(() => _testing = true);
     try {
       await ReceiptPrinter(host: host, port: port, send: widget.sendBytes)
-          .print(buildReceipt(ReceiptData(
-        brandName: (_device()['zatca_seller_name'] as String?) ?? 'POS',
-        vatNumber: (_device()['zatca_vat_number'] as String?) ?? '',
-        receiptNo: 'TEST',
-        orderNo: null,
-        dateTime: DateTime.now(),
-        lines: [ReceiptLine(qty: 1, name: 'PRINTER TEST', amount: 0)],
-        netTotal: 0,
-        taxTotal: 0,
-        finalTotal: 0,
-        payments: const [],
-        // Deliberately unsigned: a test slip is not a tax document, and the
-        // banner says so on the paper.
-        zatcaQr: null,
-      )));
+          .print(_testSlip());
       if (mounted) _toast('Test slip sent to $host:$port');
     } on Exception catch (e) {
       if (mounted) _toast('Could not reach the printer: $e');
     } finally {
       if (mounted) setState(() => _testing = false);
     }
+  }
+
+  /// The same slip on the glass. Needs no printer and no sale, which is what
+  /// setting a till up on a desk looks like.
+  void _showTestSlip() {
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (context) => ReceiptScreen(
+        bytes: _testSlip(),
+        title: 'Test receipt',
+        note: 'Exactly the bytes the printer would be sent. A real sale adds '
+            'the ZATCA QR; a test slip has nothing true to put in one.',
+      ),
+    ));
   }
 
   void _toast(String message) {
@@ -188,6 +208,14 @@ class _SetupScreenState extends State<SetupScreen> {
                         width: 18,
                         child: CircularProgressIndicator(strokeWidth: 2))
                     : const Text('Print a test slip'),
+              ),
+              const SizedBox(width: 8),
+              // Needs no printer and no sale — what setting a till up on a
+              // desk looks like.
+              TextButton.icon(
+                onPressed: _testing ? null : _showTestSlip,
+                icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                label: const Text('Show it on screen'),
               ),
             ],
           ),
