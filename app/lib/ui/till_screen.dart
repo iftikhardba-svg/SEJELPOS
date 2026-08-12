@@ -694,6 +694,10 @@ class _TillScreenState extends State<TillScreen> {
       // identity, and a hardcoded name printed another tenant's restaurant on
       // every receipt.
       brandName: (device['zatca_seller_name'] as String?) ?? '',
+      // Under the seller name, not joined to it: the top line is the legal
+      // name on a tax invoice and has to match the VAT registration, while
+      // the branch is what tells a customer which shop they were in.
+      branchName: device['branch_name'] as String?,
       vatNumber: (device['zatca_vat_number'] as String?) ?? '',
       receiptNo: sale.receiptNo,
       orderNo: orderLabel == '—' ? null : orderLabel,
@@ -781,7 +785,7 @@ class _TillScreenState extends State<TillScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('POS — Arid Branch'),
+        title: Text(_whoWeAre),
         actions: [
           // Which table this order is for, and the way back to the room. The
           // order is parked on the table rather than lost, so a waiter can
@@ -1351,6 +1355,25 @@ class _TillScreenState extends State<TillScreen> {
         ),
       ],
     );
+  }
+
+  /// Whose restaurant this till is standing in.
+  ///
+  /// From the device row, filled at enrolment. It used to be a constant —
+  /// the first customer's branch, compiled into the binary, which every
+  /// other tenant would have read as somebody else's name across the top of
+  /// their screen all day.
+  String get _whoWeAre {
+    final device =
+        widget.db.raw.select('SELECT * FROM device WHERE id = 1').firstOrNull;
+    final seller = device?['zatca_seller_name'] as String?;
+    final branch = device?['branch_name'] as String?;
+    final parts = [
+      if (seller != null && seller.isNotEmpty) seller,
+      if (branch != null && branch.isNotEmpty) branch,
+    ];
+    // A device that has not enrolled has neither, and "POS" alone is honest.
+    return parts.isEmpty ? 'POS' : 'POS — ${parts.join(" — ")}';
   }
 
   /// The method the big button charges.

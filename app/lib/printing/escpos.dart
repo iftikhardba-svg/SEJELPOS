@@ -66,6 +66,7 @@ class ReceiptData {
     required this.taxTotal,
     required this.finalTotal,
     required this.payments,
+    this.branchName,
     this.zatcaQr,
   });
 
@@ -91,6 +92,10 @@ class ReceiptData {
   /// Base64 TLV payload from the signer. Absent until the ZATCA port lands —
   /// and an unsigned receipt says so in print rather than pretending.
   final String? zatcaQr;
+
+  /// Which shop, under the seller's name. Null on a device that enrolled
+  /// before the branch was delivered, and then the receipt simply omits it.
+  final String? branchName;
 }
 
 class EscPos {
@@ -152,7 +157,11 @@ List<int> buildReceipt(ReceiptData r) {
     ..align(1)
     ..doubleSize(true)
     ..text(r.brandName)
-    ..doubleSize(false)
+    ..doubleSize(false);
+  if (r.branchName != null && r.branchName!.isNotEmpty) {
+    p.text(r.branchName!);
+  }
+  p
     ..text('VAT ${r.vatNumber}')
     ..feed(1)
     ..align(0)

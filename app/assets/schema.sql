@@ -46,6 +46,10 @@ CREATE TABLE device (
     kds_station_no  INTEGER,            -- kds only: pin to one station
     api_base_url    TEXT,
     auth_token      TEXT,
+    -- Which branch this till stands in, delivered at enrolment. Here rather
+    -- than compiled in: one build serves every customer, and a name in the
+    -- binary is the wrong restaurant on every other tenant's screen.
+    branch_name     TEXT,
     -- Receipt printer on the LAN (ESC/POS over port 9100). Unset = no printing.
     printer_host    TEXT,
     printer_port    INTEGER NOT NULL DEFAULT 9100,

@@ -26,7 +26,7 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 /// What `assets/schema.sql` currently creates.
-const int tabletSchemaVersion = 6;
+const int tabletSchemaVersion = 7;
 
 /// version -> the statements that lift a database TO that version.
 const Map<int, List<String>> _steps = {
@@ -172,6 +172,13 @@ const Map<int, List<String>> _steps = {
     // so an incremental pull would skip every one of them and the tiles would
     // stay blank for good. Re-pulling is free — every apply is an upsert.
     "UPDATE sync_state SET last_version = 0 WHERE table_name = 'catalog'",
+  ],
+  // Whose restaurant this is. The till used to have the first customer's
+  // branch compiled into it, which every other tenant would have read as
+  // somebody else's name across the top of their screen. Null until the
+  // device re-enrols, and the header falls back to the seller name.
+  7: [
+    'ALTER TABLE device ADD COLUMN branch_name TEXT',
   ],
 };
 

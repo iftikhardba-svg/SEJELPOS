@@ -40,9 +40,9 @@ class SyncService {
     db.raw.execute(
       'INSERT INTO device (id, device_uuid, station_no, store_no, '
       '  receipt_prefix, role, kds_station_no, api_base_url, auth_token, '
-      '  zatca_vat_number, zatca_seller_name, zatca_seller_cr, '
-      '  zatca_seller_address) '
-      'VALUES (1, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
+      '  branch_name, zatca_vat_number, zatca_seller_name, '
+      '  zatca_seller_cr, zatca_seller_address) '
+      'VALUES (1, ?, 1, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) '
       'ON CONFLICT(id) DO UPDATE SET '
       '  device_uuid=excluded.device_uuid, '
       '  receipt_prefix=excluded.receipt_prefix, '
@@ -50,6 +50,7 @@ class SyncService {
       '  kds_station_no=excluded.kds_station_no, '
       '  api_base_url=excluded.api_base_url, '
       '  auth_token=excluded.auth_token, '
+      '  branch_name=excluded.branch_name, '
       '  zatca_vat_number=excluded.zatca_vat_number, '
       '  zatca_seller_name=excluded.zatca_seller_name, '
       '  zatca_seller_cr=excluded.zatca_seller_cr, '
@@ -57,6 +58,7 @@ class SyncService {
       [
         deviceUuid, result.receiptPrefix, result.role,
         result.kdsStationNo, api.baseUrl, result.token,
+        result.branchName,
         result.sellerVat,
         // ZATCA wants the Arabic registered name on the invoice; the Latin
         // one is the fallback when a company has not supplied it.
