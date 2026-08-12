@@ -185,6 +185,15 @@ class SyncApi {
     return _decode(r);
   }
 
+  /// The customer took it: off the kitchen's done lane and off the board.
+  Future<Map<String, dynamic>> kdsCollect(String ticketId) async {
+    final r = await _client.post(
+      _u('/kds/tickets/$ticketId/collect'),
+      headers: _headers(),
+    );
+    return _decode(r);
+  }
+
   Future<Map<String, dynamic>> kdsRecall(String ticketId) async {
     final r = await _client.post(
       _u('/kds/tickets/$ticketId/recall'),

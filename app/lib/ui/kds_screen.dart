@@ -39,6 +39,13 @@ class KdsScreen extends StatefulWidget {
 }
 
 class _KdsScreenState extends State<KdsScreen> {
+  /// The station tab in view. Null is "All".
+  ///
+  /// A device pinned at enrolment starts on its own station; an unpinned one
+  /// starts on All. Either way the cook can switch, because a kitchen that
+  /// cannot see the other stations cannot see why its own is waiting.
+  int? _tab;
+
   List<Map<String, dynamic>> _open = const [];
   List<Map<String, dynamic>> _done = const [];
   String? _error;
@@ -49,6 +56,7 @@ class _KdsScreenState extends State<KdsScreen> {
   @override
   void initState() {
     super.initState();
+    _tab = widget.stationNo;
     _refresh();
     _poll = Timer.periodic(widget.pollInterval, (_) => _refresh());
     _clock = Timer.periodic(
@@ -66,7 +74,10 @@ class _KdsScreenState extends State<KdsScreen> {
 
   Future<void> _refresh() async {
     try {
-      final body = await widget.api.kdsQueue(station: widget.stationNo);
+      // The whole branch's queue, filtered on screen. Asking the server for
+      // one station would make the tabs a lie — they would each show the
+      // same thing.
+      final body = await widget.api.kdsQueue();
       if (!mounted) return;
       setState(() {
         _open = _tickets(body['open']);
@@ -92,6 +103,15 @@ class _KdsScreenState extends State<KdsScreen> {
     return s < 0 ? 0 : s;
   }
 
+  /// The station a line belongs to, in words. An unrouted line says so
+  /// rather than showing a blank: "no station" is information, and it means
+  /// Expo has it.
+  String _stationChip(Map<String, dynamic> line) {
+    final no = line['station_no'] as int?;
+    if (no == null) return 'Expo';
+    return widget.stationNames[no] ?? 'St $no';
+  }
+
   String _mmss(int s) =>
       '${(s ~/ 60).toString().padLeft(2, '0')}:'
       '${(s % 60).toString().padLeft(2, '0')}';
@@ -101,19 +121,61 @@ class _KdsScreenState extends State<KdsScreen> {
     await _refresh();
   }
 
+  /// The customer took it: off this lane and off the customer board.
+  Future<void> _collect(String id) async {
+    await widget.api.kdsCollect(id);
+    await _refresh();
+  }
+
   Future<void> _recall(String id) async {
     await widget.api.kdsRecall(id);
     await _refresh();
   }
 
+  /// The lines of [t] this station has to make.
+  ///
+  /// A line with no station is Expo's: the imported catalog routes by a
+  /// PRINTLOC bitmask and 0 means "nobody prints it", which in this kitchen
+  /// is the pass. Dropping those lines would hide whole items from the only
+  /// screen that assembles an order.
+  List<Map<String, dynamic>> _linesFor(Map<String, dynamic> t, int? station) {
+    final lines = _tickets(t['lines']);
+    if (station == null) return lines;
+    return [
+      for (final l in lines)
+        if (l['station_no'] == station ||
+            (station == _expo && (l['station_no'] as int?) == null))
+          l,
+    ];
+  }
+
+  /// Expo is where an unrouted line belongs. Named by the station whose name
+  /// says so rather than by a number compiled in, so a kitchen that calls it
+  /// something else still works.
+  int? get _expo {
+    for (final entry in widget.stationNames.entries) {
+      if (entry.value.toLowerCase().contains('expo')) return entry.key;
+    }
+    return null;
+  }
+
+  List<Map<String, dynamic>> get _shown => [
+        for (final t in _open) if (_linesFor(t, _tab).isNotEmpty) t,
+      ];
+
+  String _stationName(int? no) => no == null
+      ? 'All stations'
+      : widget.stationNames[no] ?? 'Station $no';
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final late = _open.where((t) => _ageSeconds(t) >= 300).length;
-    final station = widget.stationNo == null
-        ? 'All stations'
-        : widget.stationNames[widget.stationNo] ??
-            'Station ${widget.stationNo}';
+    final shown = _shown;
+    final late = shown.where((t) => _ageSeconds(t) >= 300).length;
+    final avg = shown.isEmpty
+        ? null
+        : shown.map(_ageSeconds).reduce((a, b) => a + b) ~/ shown.length;
+    final station = _stationName(_tab);
 
     return Scaffold(
       appBar: AppBar(
@@ -126,18 +188,10 @@ class _KdsScreenState extends State<KdsScreen> {
                 child: Icon(Icons.cloud_off, color: scheme.error),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Center(
-              child: Text(
-                '${_open.length} open · $late late',
-                style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: late > 0 ? scheme.error : null,
-                ),
-              ),
-            ),
-          ),
+          _tile('${shown.length}', 'Open', scheme),
+          _tile(avg == null ? '—' : _mmss(avg), 'Avg wait', scheme),
+          _tile('$late', 'Late \u2265 5 min', scheme,
+              alert: late > 0),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh now',
@@ -145,19 +199,80 @@ class _KdsScreenState extends State<KdsScreen> {
           ),
         ],
       ),
-      body: Row(
+      body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: _rail(scheme)),
-          SizedBox(width: 220, child: _doneLane(scheme)),
+          _stationTabs(scheme),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(child: _rail(scheme, shown)),
+                SizedBox(width: 220, child: _doneLane(scheme)),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _rail(ColorScheme scheme) {
-    if (_open.isEmpty) {
-      return const Center(child: Text('No open tickets'));
+  /// One of the three figures a kitchen actually runs on.
+  Widget _tile(String value, String label, ColorScheme scheme,
+      {bool alert = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(value,
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w800,
+                color: alert ? scheme.error : null,
+              )),
+          Text(label,
+              style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
+        ],
+      ),
+    );
+  }
+
+  /// All, then every station, each carrying how many open tickets it has
+  /// work in — the count is what tells a cook where the queue actually is.
+  Widget _stationTabs(ColorScheme scheme) {
+    final stations = widget.stationNames.keys.toList()..sort();
+    Widget tab(int? no) {
+      final count = _open.where((t) => _linesFor(t, no).isNotEmpty).length;
+      final selected = no == _tab;
+      return Padding(
+        padding: const EdgeInsets.only(right: 8),
+        child: ChoiceChip(
+          selected: selected,
+          showCheckmark: false,
+          onSelected: (_) => setState(() => _tab = no),
+          label: Text('${_stationName(no)}  $count'),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 52,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+        children: [tab(null), for (final no in stations) tab(no)],
+      ),
+    );
+  }
+
+  Widget _rail(ColorScheme scheme, List<Map<String, dynamic>> shown) {
+    if (shown.isEmpty) {
+      return Center(
+        child: Text(_tab == null
+            ? 'No open tickets'
+            : 'No open tickets for ${_stationName(_tab)}'),
+      );
     }
     return GridView.builder(
       padding: const EdgeInsets.all(8),
@@ -167,16 +282,19 @@ class _KdsScreenState extends State<KdsScreen> {
         crossAxisSpacing: 8,
         mainAxisSpacing: 8,
       ),
-      itemCount: _open.length,
-      itemBuilder: (context, i) => _ticketCard(_open[i], scheme),
+      itemCount: shown.length,
+      itemBuilder: (context, i) => _ticketCard(shown[i], scheme),
     );
   }
 
   Widget _ticketCard(Map<String, dynamic> t, ColorScheme scheme) {
     final age = _ageSeconds(t);
     final band = ageColor(age, scheme);
-    final lines = _tickets(t['lines']);
+    final lines = _linesFor(t, _tab);
     final isAggregator = t['external_ref'] != null;
+    // Solid once there is nothing left to tick: the cook should be able to
+    // see a finished ticket across the kitchen without reading it.
+    final ready = lines.every((l) => l['done'] == true);
 
     return Card(
       shape: RoundedRectangleBorder(
@@ -226,15 +344,31 @@ class _KdsScreenState extends State<KdsScreen> {
                             .kdsLineDone(l['id'] as String, done: v ?? false);
                         await _refresh();
                       },
-                      title: Text(
-                        '${(l['qty'] as num).toStringAsFixed(0)}× '
-                        '${l['line_des']}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          decoration: l['done'] == true
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${(l['qty'] as num).toStringAsFixed(0)}× '
+                              '${l['line_des']}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                decoration: l['done'] == true
+                                    ? TextDecoration.lineThrough
+                                    : null,
+                              ),
+                            ),
+                          ),
+                          // Which station owns the line, but only on All —
+                          // on a station's own tab every chip would say the
+                          // same word.
+                          if (_tab == null)
+                            Text(
+                              _stationChip(l),
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  color: scheme.onSurfaceVariant),
+                            ),
+                        ],
                       ),
                       subtitle: l['note'] == null
                           ? null
@@ -247,10 +381,15 @@ class _KdsScreenState extends State<KdsScreen> {
             ),
             SizedBox(
               width: double.infinity,
-              child: FilledButton(
-                onPressed: () => _bump(t['id'] as String),
-                child: Text('Bump #${t['order_no'] ?? ''}'),
-              ),
+              child: ready
+                  ? FilledButton(
+                      onPressed: () => _bump(t['id'] as String),
+                      child: Text('Bump #${t['order_no'] ?? ''}'),
+                    )
+                  : OutlinedButton(
+                      onPressed: () => _bump(t['id'] as String),
+                      child: Text('Bump #${t['order_no'] ?? ''}'),
+                    ),
             ),
           ],
         ),
@@ -266,7 +405,7 @@ class _KdsScreenState extends State<KdsScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.all(10),
-            child: Text('Done',
+            child: Text('Done · last ${_done.length}',
                 style: TextStyle(
                     fontWeight: FontWeight.w700,
                     color: scheme.onSurfaceVariant)),
@@ -282,6 +421,18 @@ class _KdsScreenState extends State<KdsScreen> {
                           title: Text('#${t['order_no'] ?? '—'}',
                               style: const TextStyle(
                                   fontWeight: FontWeight.w700)),
+                          subtitle: TextButton(
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              alignment: Alignment.centerLeft,
+                              minimumSize: const Size(0, 28),
+                            ),
+                            // Handed over: it leaves this lane and the
+                            // customer board with it. Recall is still there
+                            // for the press that was a mistake.
+                            onPressed: () => _collect(t['id'] as String),
+                            child: const Text('Delivered'),
+                          ),
                           trailing: TextButton(
                             onPressed: () => _recall(t['id'] as String),
                             child: const Text('Recall'),

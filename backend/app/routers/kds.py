@@ -37,6 +37,11 @@ router = APIRouter(tags=["kds"])
 
 OPEN = "open"
 DONE = "done"
+# Handed over. A bumped ticket is cooked and waiting on the pass; a collected
+# one is with the customer, and has to leave both the kitchen's done lane and
+# the order board — otherwise the board fills with numbers nobody is waiting
+# for and the one number that matters is somewhere down the list.
+COLLECTED = "collected"
 
 RECALL_LANE_SIZE = 5
 
@@ -206,12 +211,32 @@ async def recall(
     ticket_id: uuid.UUID,
     ctx: DeviceContext = Depends(current_device),
 ) -> KitchenTicketOut:
-    """Bumped by mistake — bring it back to the rail."""
+    """Bumped or collected by mistake — bring it back to the rail."""
     async with tenant_session(ctx.tenant_id) as session:
         t = await _get(session, ticket_id, ctx)
         if t.status != OPEN:
             t.status = OPEN
             t.bumped_at = None
+            await session.flush()
+        return _out(t)
+
+
+@router.post("/kds/tickets/{ticket_id}/collect",
+             response_model=KitchenTicketOut)
+async def collect(
+    ticket_id: uuid.UUID,
+    ctx: DeviceContext = Depends(current_device),
+) -> KitchenTicketOut:
+    """The customer took it. Idempotent, like bump and recall.
+
+    Deliberately a third state rather than a delete: the ticket is the record
+    that the kitchen made this food, and a report that counts what a station
+    produced cannot count rows somebody removed from a board.
+    """
+    async with tenant_session(ctx.tenant_id) as session:
+        t = await _get(session, ticket_id, ctx)
+        if t.status != COLLECTED:
+            t.status = COLLECTED
             await session.flush()
         return _out(t)
 

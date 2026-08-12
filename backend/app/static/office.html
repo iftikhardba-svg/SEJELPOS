@@ -2417,6 +2417,11 @@ async function editTable(area, table) {
 async function renderDevices() {
   loading('devices');
   try {
+    // Needed for the kitchen-station picker below. Loaded here as well as on
+    // the products tab, because a manager can open Devices first.
+    if (!stations.length) {
+      try { stations = await api('/kitchen-stations'); } catch { stations = []; }
+    }
     const rows = await api('/devices');
     const wrap = el('div');
 
@@ -2453,6 +2458,23 @@ async function renderDevices() {
     const prefix = el('input', { type: 'text', placeholder: 'T01', maxLength: 8 });
     const role = el('select');
     for (const r of ['pos', 'kds', 'cds']) role.append(el('option', { value: r, textContent: r.toUpperCase() }));
+
+    // Which station a kitchen screen opens on. A branch with a grill, a
+    // shawarma spit and a pass wants one screen each; without this every
+    // kitchen screen opens on the whole kitchen's queue and a cook has to
+    // find their own work in it. Left blank the screen opens on All, which
+    // is right for a single-screen kitchen.
+    const stationField = el('div', { className: 'hidden' });
+    const station = el('select');
+    station.append(el('option', { value: '', textContent: 'All stations' }));
+    for (const st of stations) {
+      station.append(el('option', { value: String(st.station_no),
+        textContent: st.name }));
+    }
+    role.addEventListener('change', () => {
+      stationField.classList.toggle('hidden', role.value !== 'kds');
+    });
+
     const go = el('button', { className: 'btn', textContent: 'Create code' });
     const out = el('div');
 
@@ -2465,6 +2487,9 @@ async function renderDevices() {
           branch_id: branchSel.value, label: label.value.trim(),
           receipt_prefix: prefix.value.trim(), role: role.value,
         });
+        if (role.value === 'kds' && station.value) {
+          qs.set('kds_station_no', station.value);
+        }
         const r = await api('/devices/enrolments?' + qs, { method: 'POST' });
         out.replaceChildren(
           el('p', { className: 'muted', style: 'margin:14px 0 0',
@@ -2477,7 +2502,9 @@ async function renderDevices() {
 
     const row = el('div', { className: 'row' });
     const field = (lbl, ctl) => el('div', {}, [el('label', { textContent: lbl }), ctl]);
-    row.append(field('Branch', branchSel), field('Name', label), field('Receipt prefix', prefix), field('Role', role));
+    stationField.append(el('label', { textContent: 'Kitchen station' }), station);
+    row.append(field('Branch', branchSel), field('Name', label),
+      field('Receipt prefix', prefix), field('Role', role), stationField);
     form.append(row, el('div', { style: 'margin-top:14px' }, go), out);
     wrap.append(panel('Add a device', form));
 

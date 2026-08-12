@@ -6,6 +6,8 @@
 /// crash or an update must never cost a sale.
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path/path.dart' as p;
@@ -22,10 +24,38 @@ import 'ui/kds_screen.dart';
 import 'ui/till_screen.dart';
 import 'zatca/device_signer.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   final schema = await rootBundle.loadString('assets/schema.sql');
-  final dir = await getApplicationSupportDirectory();
+
+  // One machine can hold more than one device. A restaurant has a till, a
+  // kitchen screen and a customer board, and until now this app kept its
+  // database at one fixed path — so a laptop could only ever be one of the
+  // three, and the three could not be shown working together at all.
+  //
+  //     pos_app.exe --profile=kitchen
+  //
+  // Without the flag nothing moves: the default profile is the same path
+  // every installed till already uses.
+  final profile = _profileFrom(args);
+  // A presentation drives the customer board by hand; a branch never should.
+  final demo = args.contains('--demo');
+  final support = await getApplicationSupportDirectory();
+  final dir = profile == null
+      ? support
+      : Directory(p.join(support.path, 'profiles', profile))
+    ..createSync(recursive: true);
+
+  // Two copies of one profile open one database, and SQLite is not the thing
+  // that stops them: it has already cost a device its catalog and its unsent
+  // sales. The lock is held for the life of the process and released by the
+  // operating system if it dies.
+  final lock = _claim(dir);
+  if (lock == null) {
+    runApp(_AlreadyRunning(profile: profile));
+    return;
+  }
+
   final db = PosDatabase.openFile(
     p.join(dir.path, 'pos.db'),
     schema,
@@ -36,13 +66,91 @@ Future<void> main() async {
     // state the till is built to survive.
     signer: DeviceSigner(keys: FileKeyProvider(dir.path)),
   );
-  runApp(PosApp(db: db));
+  runApp(PosApp(db: db, profile: profile, demo: demo));
+}
+
+/// `--profile=kitchen`, or null for the installed device's own database.
+String? _profileFrom(List<String> args) {
+  for (final arg in args) {
+    if (arg.startsWith('--profile=')) {
+      final name = arg.substring('--profile='.length).trim();
+      // A profile becomes a directory name, so anything that could climb out
+      // of the support directory is refused rather than sanitised quietly.
+      if (name.isEmpty || name.contains(RegExp(r'[^A-Za-z0-9._-]'))) {
+        throw ArgumentError(
+          'profile names may contain letters, digits, dot, dash and '
+          'underscore only; got "$name"',
+        );
+      }
+      return name;
+    }
+  }
+  return null;
+}
+
+/// Take the lock for this profile, or null if another copy holds it.
+RandomAccessFile? _claim(Directory dir) {
+  try {
+    final file = File(p.join(dir.path, 'app.lock')).openSync(mode: FileMode.write);
+    file.lockSync(FileLock.exclusive);
+    return file;
+  } on FileSystemException {
+    return null;
+  }
+}
+
+/// What the second copy shows. Deliberately a dead end with no way through:
+/// the whole point is that it must not open the database.
+class _AlreadyRunning extends StatelessWidget {
+  const _AlreadyRunning({this.profile});
+
+  final String? profile;
+
+  @override
+  Widget build(BuildContext context) {
+    final which = profile == null ? 'this device' : 'the "$profile" profile';
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(48),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.lock_outline, size: 48),
+                const SizedBox(height: 16),
+                const Text('Already running',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text(
+                  'Another copy of the app is open on $which. Two copies '
+                  'share one database and can destroy a day of sales, so '
+                  'this one will not start.\n\nSwitch to the window that is '
+                  'already open, or start this one with a different '
+                  '--profile.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class PosApp extends StatefulWidget {
-  const PosApp({super.key, required this.db});
+  const PosApp({super.key, required this.db, this.profile, this.demo = false});
 
   final PosDatabase db;
+
+  /// Named when the app was started with --profile, so several devices on one
+  /// machine can be told apart.
+  final String? profile;
+
+  /// `--demo`: the customer board gets the mockup's staged controls.
+  final bool demo;
 
   @override
   State<PosApp> createState() => _PosAppState();
@@ -140,6 +248,15 @@ class _PosAppState extends State<PosApp> {
         stationNames: widget.db.kitchenStations(),
       );
     }
-    return CdsScreen(api: api);
+    return CdsScreen(
+      api: api,
+      // From the device row, not a constant. A board with another
+      // restaurant's name on it is worse than a board with no name.
+      brandName: (device['zatca_seller_name'] as String?) ?? '',
+      branchName: device['branch_name'] as String?,
+      vatNumber: (device['zatca_vat_number'] as String?) ?? '',
+      demo: widget.demo,
+      stationNos: widget.db.kitchenStations().keys.toList()..sort(),
+    );
   }
 }
